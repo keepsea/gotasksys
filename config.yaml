@@ -1,0 +1,19 @@
+# config.yaml
+
+# 服务端口配置
+server:
+  port: "8080"
+  
+# 数据库配置 (与 docker-compose.yml 中保持一致)
+database:
+  host: "db" # 注意：这里不再是localhost，而是docker-compose中的服务名
+  port: "5432"
+  user: "kanban_user"
+  password: "a_very_strong_password"
+  dbname: "task_kanban"
+  sslmode: "disable"
+
+# JWT (JSON Web Token) 配置
+jwt:
+  secret: "a_super_secret_key_that_should_be_long_and_random" # 用于签发Token的密钥
+  expiration_hours: 72 # Token有效期（小时）
