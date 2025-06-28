@@ -1,0 +1,27 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+  # 这是我们的PostgreSQL数据库服务
+  db:
+    image: postgres:16-alpine  # 使用官方的、轻量级的PostgreSQL 16镜像
+    container_name: kanban_db
+    environment:
+      - POSTGRES_USER=kanban_user
+      - POSTGRES_PASSWORD=a_very_strong_password # 在实际生产中请使用更复杂的密码
+      - POSTGRES_DB=task_kanban
+    ports:
+      - "5432:5432" # 将容器的5432端口映射到您电脑的5432端口
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data # 将数据库数据持久化到本地，防止容器删除后数据丢失
+    restart: always
+
+  # 这是我们未来的Go应用服务 (暂时注释掉，后续会启用)
+  # app:
+  #   build: .
+  #   container_name: kanban_app
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - db

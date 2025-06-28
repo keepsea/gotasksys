@@ -1,0 +1,28 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when run with the
+# -o option to specify an output file.
+*.out
+
+# Go workspace file
+go.work
+
+# Go build cache
+go.work.sum
+
+# Local development config
+config.local.yaml
+
+# Compiled binary
+gotasksys
+
+# postgresql data directory
+/postgres_data
