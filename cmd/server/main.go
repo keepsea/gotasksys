@@ -3,35 +3,49 @@
 package main
 
 import (
-	"gotasksys/internal/config" // 导入我们自己的包
+	"gotasksys/internal/api/handler"
+	"gotasksys/internal/api/middleware"
+	"gotasksys/internal/config"
 	"log"
-	"net/http"
 
+	// 确保导入handler包
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	// 加载配置
+	// ... (加载配置和初始化DB部分不变) ...
 	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	// 初始化数据库连接
 	config.InitDB(cfg)
 
-	// 初始化 Gin 引擎
 	r := gin.Default()
 
-	// 设置一个基础的 API 分组
 	v1 := r.Group("/api/v1")
 	{
-		// 健康检查路由
-		v1.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "pong",
-			})
-		})
+
+		// --- 公开路由 (不需要登录) ---
+		v1.POST("/register", handler.Register)
+		v1.POST("/login", handler.Login)
+		// --- 受保护路由 (需要登录和JWT) ---
+		authRequired := v1.Group("/")
+		authRequired.Use(middleware.AuthMiddleware()) // <--- 在这里应用我们的认证中间件
+		{
+			// 所有需要登录才能访问的接口，都写在这里面
+			authRequired.GET("/profile", handler.GetProfile)
+			// === 新增的创建任务路由 ===
+			authRequired.POST("/tasks", handler.CreateTask)
+			// === 新增的获取任务列表路由 ===
+			authRequired.GET("/tasks", handler.ListTasks)
+			// === 新增的获取单个任务路由 ===
+			authRequired.GET("/tasks/:id", handler.GetTask)
+			// === 新增的更新任务路由 ===
+			// 我们使用PATCH，因为它更符合“部分更新”的语义
+			authRequired.PATCH("/tasks/:id", handler.UpdateTask)
+			// === 新增的删除任务路由 ===
+			authRequired.DELETE("/tasks/:id", handler.DeleteTask)
+		}
 	}
 
 	// 启动服务

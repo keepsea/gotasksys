@@ -1,0 +1,128 @@
+### Register a new system admin user
+POST http://localhost:8080/api/v1/register
+Content-Type: application/json
+
+{
+  "username": "member",
+  "password": "Password123!@#",
+  "real_name": "普通用户",
+  "role": "member"
+}
+
+### Login with the registered user
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Password123!@#"
+}
+### (测试1) 尝试在没有通行证的情况下访问受保护接口 (预期会失败)
+GET http://localhost:8080/api/v1/profile
+
+
+### (测试2) 使用通行证访问受保护接口 (预期会成功)
+# @name login_for_token
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Password123!@#"
+}
+
+# 使用上面请求获取到的token
+@token = {{login_for_token.response.body.token}}
+
+###
+GET http://localhost:8080/api/v1/profile
+Authorization: Bearer {{token}}
+
+### (测试3) 创建一个新任务 (需要登录)
+# 使用登录请求来获取一个有效的token
+# @name login_for_task_creation
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Password123!@#"
+}
+
+@token = {{login_for_task_creation.response.body.token}}
+
+###创建一个任务
+POST http://localhost:8080/api/v1/tasks
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+    "title": "测试任务2",
+    "description": "需要汇总所有安全事件，并形成最终报告文档。",
+    "priority": "P1",
+    "effort": 16,
+    "task_type_id": "5c508dd3-4bc5-4ee7-8a71-f207d609e79d"
+}
+
+### (测试4) 获取任务列表 (需要登录)
+
+# 我们仍然需要一个有效的token
+# @name login_for_listing_tasks
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Password123!@#"
+}
+
+@token = {{login_for_listing_tasks.response.body.token}}
+
+###
+GET http://localhost:8080/api/v1/tasks
+Authorization: Bearer {{token}}
+### (测试5) 获取单个任务详情 (需要登录)
+
+# 我们仍然需要一个有效的token
+@token = {{login_for_listing_tasks.response.body.token}}
+
+###
+# 注意：请将下面URL末尾的 1 替换为您从测试4中复制的真实任务ID
+GET http://localhost:8080/api/v1/tasks/6
+Authorization: Bearer {{token}}
+
+### (测试6) 更新一个已存在的任务 (需要登录)
+
+@token = {{login_for_listing_tasks.response.body.token}}
+
+###
+# 注意：请将下面URL末尾的 1 替换为您复制的真实任务ID
+PATCH http://localhost:8080/api/v1/tasks/6
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+    "title": "【已更新】部署第一季度的安全审计报告",
+    "description": "需要汇总所有安全事件，并形成最终报告文档。补充：需要加入风险评级。",
+    "priority": "P0",
+    "effort": 20
+}
+
+### (测试7) 删除一个任务 (需要manager权限)
+
+# 使用 manager 账号登录获取 token
+# @name login_as_manager_for_delete
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "member",
+  "password": "Password123!@#"
+}
+
+@token = {{login_as_manager_for_delete.response.body.token}}
+
+###
+# 注意：请将下面URL末尾的 ID 替换为您刚刚创建的待删除任务的真实ID
+DELETE http://localhost:8080/api/v1/tasks/7
+Authorization: Bearer {{token}}
