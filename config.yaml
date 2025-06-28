@@ -6,7 +6,7 @@ server:
   
 # 数据库配置 (与 docker-compose.yml 中保持一致)
 database:
-  host: "db" # 注意：这里不再是localhost，而是docker-compose中的服务名
+  host: "localhost" # 注意：记得改为"db"，这里不再是localhost，而是docker-compose中的服务名
   port: "5432"
   user: "kanban_user"
   password: "a_very_strong_password"
