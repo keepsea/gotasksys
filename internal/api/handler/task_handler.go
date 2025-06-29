@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 // CreateTaskInput 结构体保持不变
@@ -158,4 +159,149 @@ func DeleteTask(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
+}
+
+// ApproveTask 批准一个待审核的任务
+func ApproveTask(c *gin.Context) {
+	// 权限校验
+	userRole, _ := c.Get("user_role")
+	if userRole != "manager" && userRole != "system_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can approve tasks."})
+		return
+	}
+
+	// 获取任务ID
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	// 获取审批人ID
+	reviewerIDStr, _ := c.Get("user_id")
+	reviewerID, _ := uuid.Parse(reviewerIDStr.(string))
+
+	// 调用Service层处理业务逻辑
+	err = service.ApproveTaskService(uint(taskID), reviewerID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task approved successfully and moved to pool."})
+}
+
+// ClaimTask 允许用户从任务池中领取任务
+func ClaimTask(c *gin.Context) {
+	// 任何登录的用户都可以领取任务，所以我们只检查登录状态，不校验角色
+
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	// 从中间件获取当前操作用户的ID
+	assigneeIDStr, _ := c.Get("user_id")
+	assigneeID, _ := uuid.Parse(assigneeIDStr.(string))
+
+	// 调用Service层处理业务逻辑
+	err = service.ClaimTaskService(uint(taskID), assigneeID)
+	if err != nil {
+		// 如果任务状态不对或已被分配，返回409 Conflict更合适
+		if err.Error() == "task is not available to be claimed" || err.Error() == "task has already been assigned" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to claim task"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task claimed successfully."})
+}
+
+// CompleteTask 允许负责人完成任务并提交评价
+func CompleteTask(c *gin.Context) {
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	// 从中间件获取当前操作用户的ID
+	currentUserIDStr, _ := c.Get("user_id")
+	currentUserID, _ := uuid.Parse(currentUserIDStr.(string))
+
+	// 调用Service层处理业务逻辑
+	err = service.CompleteTaskService(uint(taskID), currentUserID)
+	if err != nil {
+		// 根据错误类型返回不同的HTTP状态码
+		switch err.Error() {
+		case "task not found":
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case "permission denied: you are not the assignee of this task":
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case "task is not in progress":
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete task"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task completed and submitted for evaluation."})
+}
+
+// EvaluateTaskInput 定义了评价任务时需要输入的参数
+type EvaluateTaskInput struct {
+	// 我们直接使用 datatypes.JSON 来接收任意结构的JSON评价数据
+	// 前端可以传入 {"timeliness": 5, "quality": 4.5, ...} 这样的格式
+	Evaluation datatypes.JSON `json:"evaluation" binding:"required"`
+}
+
+// EvaluateTask 允许管理者评价一个已完成的任务
+func EvaluateTask(c *gin.Context) {
+	// 权限校验
+	userRole, _ := c.Get("user_role")
+	if userRole != "manager" && userRole != "system_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can evaluate tasks."})
+		return
+	}
+
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	var input EvaluateTaskInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 调用Service层处理业务逻辑
+	err = service.EvaluateTaskService(uint(taskID), input.Evaluation)
+	if err != nil {
+		if err.Error() == "task not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task is not pending evaluation" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to evaluate task"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task evaluated successfully and marked as completed."})
 }

@@ -26,3 +26,6 @@ gotasksys
 
 # postgresql data directory
 /postgres_data
+
+#vue directory
+#/gotasksysvite

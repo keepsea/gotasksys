@@ -1,0 +1,12 @@
+// src/services/api.ts
+
+import axios from 'axios';
+
+const apiClient = axios.create({
+    baseURL: 'http://localhost:8080/api/v1', // 统一设置API的基础路径
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
+
+export default apiClient;
