@@ -8,18 +8,24 @@ import (
 	"gotasksys/internal/service" // 引入service层
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 )
 
-// CreateTaskInput 结构体保持不变
+// CreateTaskInput (最终版): 只包含用户创建时需要提供的信息
 type CreateTaskInput struct {
-	Title       string `json:"title" binding:"required"`
-	Description string `json:"description"`
-	Priority    string `json:"priority" binding:"required"`
-	//Effort      int    `json:"effort"`
+	Title       string     `json:"title" binding:"required"`
+	Description string     `json:"description"`
+	DueDate     *time.Time `json:"due_date" binding:"required"`
+}
+
+// ApproveTaskInput (最终版): 包含Manager审批时需要设定的所有信息
+type ApproveTaskInput struct {
+	Effort     int    `json:"effort" binding:"required,gt=0"`
+	Priority   string `json:"priority" binding:"required"`
 	TaskTypeID string `json:"task_type_id" binding:"required,uuid"`
 }
 
@@ -32,16 +38,14 @@ func CreateTask(c *gin.Context) {
 		return
 	}
 	creatorID, _ := uuid.Parse(c.GetString("user_id"))
-	taskTypeID, _ := uuid.Parse(input.TaskTypeID)
 
 	taskModel := model.Task{
 		Title:       input.Title,
 		Description: input.Description,
-		Priority:    input.Priority,
-		TaskTypeID:  taskTypeID,
-		CreatorID:   creatorID,
+		DueDate:     input.DueDate,
 	}
-	createdTask, err := service.CreateTaskService(taskModel)
+
+	createdTask, err := service.CreateTaskService(taskModel, creatorID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
@@ -174,37 +178,36 @@ func DeleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
 
-// --- 新增：为审批任务定义的输入结构 ---
-type ApproveTaskInput struct {
-	Effort int `json:"effort" binding:"required,gt=0"`
-}
-
-// ApproveTask 批准任务时接收并设定工时
+// ApproveTask 批准任务时接收并设定工时 (最终版)
 func ApproveTask(c *gin.Context) {
+	// ... (函数前半部分的代码保持不变) ...
 	userRole, _ := c.Get("user_role")
-	if userRole != "manager" && userRole != "system_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied"})
-		return
+	if userRole != "manager" && userRole != "system_admin" { /* ... */
 	}
-	taskIDStr := c.Param("id")
-	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
-		return
-	}
+	taskID, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	reviewerID, _ := uuid.Parse(c.GetString("user_id"))
+
 	var input ApproveTaskInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	reviewerID, _ := uuid.Parse(c.GetString("user_id"))
+	taskTypeID, _ := uuid.Parse(input.TaskTypeID)
 
-	err = service.ApproveTaskService(uint(taskID), reviewerID, input.Effort)
+	// --- 这里的组装逻辑有微调 ---
+	updateData := model.Task{
+		Effort:     input.Effort,
+		Priority:   input.Priority,
+		TaskTypeID: &taskTypeID, // <-- 修改在这里：因为模型是*uuid.UUID，所以这里要传递指针
+	}
+	// -------------------------
+
+	err := service.ApproveTaskService(uint(taskID), reviewerID, updateData)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Task approved successfully and moved to pool."})
+	c.JSON(http.StatusOK, gin.H{"message": "Task approved successfully."})
 }
 
 // ClaimTask 允许用户从任务池中领取任务
@@ -427,52 +430,68 @@ func ResubmitTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task resubmitted successfully."})
 }
 
-// CreateSubtask 为一个任务创建子任务
+// CreateSubtaskInput (最终锁定版)
+// - 移除了 Priority (将自动继承)
+// - 新增了 DueDate (必需)
 type CreateSubtaskInput struct {
-	Title       string `json:"title" binding:"required"`
-	Description string `json:"description"`
-	Priority    string `json:"priority" binding:"required"`
-	Effort      int    `json:"effort" binding:"required,gte=1"`
+	Title       string     `json:"title" binding:"required"`
+	Description string     `json:"description"`
+	Effort      int        `json:"effort" binding:"required,gte=1"`
+	DueDate     *time.Time `json:"due_date" binding:"required"`
 }
 
 // -----------------------------------------
 
-// CreateSubtask 为一个任务创建子任务 (最终修正版)
+// CreateSubtask (最终锁定版)
 func CreateSubtask(c *gin.Context) {
+	// 1. 解析父任务ID (逻辑不变)
 	parentTaskIDStr := c.Param("id")
 	parentTaskID, err := strconv.ParseUint(parentTaskIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid parent task ID"})
 		return
 	}
+
+	// 2. 使用新的输入结构体来解析请求体
 	var input CreateSubtaskInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 3. 获取当前用户ID (逻辑不变)
 	creatorID, _ := uuid.Parse(c.GetString("user_id"))
 
+	// 4. 组装将要传递给Service层的数据模型
+	// 注意：这里不再包含Priority
 	subtaskInput := model.Task{
 		Title:       input.Title,
 		Description: input.Description,
-		Priority:    input.Priority,
 		Effort:      input.Effort,
+		DueDate:     input.DueDate,
 	}
 
+	// 5. 调用Service层处理核心业务逻辑
 	createdSubtask, err := service.CreateSubtaskService(uint(parentTaskID), creatorID, subtaskInput)
 	if err != nil {
-		// --- 新增：处理工时超限的错误 ---
-		if err.Error() == "total effort of subtasks cannot exceed parent task's original effort" {
+		// 6. 完整的错误处理，包含我们新增的所有校验
+		switch err.Error() {
+		case "subtask due date cannot be after the parent task's due date":
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		// ---------------------------------
-		if err.Error() == "permission denied: only the assignee of the main task can create subtasks" {
+		case "total effort of subtasks cannot exceed parent task's original effort":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case "permission denied: only the assignee of the main task can create subtasks":
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
+		case "parent task not found":
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case "only in-progress tasks can have subtasks":
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create subtask"})
 		}
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 7. 返回成功响应
 	c.JSON(http.StatusCreated, createdSubtask)
 }

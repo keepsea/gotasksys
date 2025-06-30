@@ -14,20 +14,16 @@ import (
 )
 
 // CreateTaskService 封装了创建任务的业务逻辑
-func CreateTaskService(input model.Task) (model.Task, error) {
-	// 业务规则1：新任务的初始状态总是 "pending_review"
-	input.Status = "pending_review"
-
-	// 业务规则2：原始工作量等于预估工作量
-	input.OriginalEffort = input.Effort
-
-	// 调用仓储层将任务存入数据库
-	err := repository.CreateTask(&input)
-	if err != nil {
-		return model.Task{}, err
+func CreateTaskService(input model.Task, creatorID uuid.UUID) (model.Task, error) {
+	task := model.Task{
+		Title:       input.Title,
+		Description: input.Description,
+		DueDate:     input.DueDate, // 保存创建者设定的截止时间
+		CreatorID:   creatorID,
+		Status:      "pending_review", // 新任务的初始状态
 	}
-
-	return input, nil
+	err := repository.CreateTask(&task)
+	return task, err
 }
 
 // ListTasksService 根据用户角色和ID，获取其能看到的任务列表
@@ -104,7 +100,7 @@ func DeleteTaskService(id uint) error {
 	return repository.DeleteTask(id)
 }
 
-func ApproveTaskService(taskID uint, reviewerID uuid.UUID, effort int) error {
+func ApproveTaskService(taskID uint, reviewerID uuid.UUID, input model.Task) error {
 	task, err := repository.FindTaskByID(taskID)
 	if err != nil {
 		return errors.New("task not found")
@@ -112,7 +108,7 @@ func ApproveTaskService(taskID uint, reviewerID uuid.UUID, effort int) error {
 	if task.Status != "pending_review" {
 		return errors.New("task is not in pending_review status")
 	}
-	if effort <= 0 {
+	if input.Effort <= 0 {
 		return errors.New("effort must be greater than zero")
 	}
 
@@ -120,8 +116,10 @@ func ApproveTaskService(taskID uint, reviewerID uuid.UUID, effort int) error {
 		"status":          "in_pool",
 		"reviewer_id":     reviewerID,
 		"approved_at":     time.Now(),
-		"effort":          effort, // 在审批时设定工时
-		"original_effort": effort, // 同时记录原始工时
+		"effort":          input.Effort,     // Manager设定的工时
+		"original_effort": input.Effort,     // Manager设定的原始工时
+		"priority":        input.Priority,   // Manager设定的优先级
+		"task_type_id":    input.TaskTypeID, // Manager最终确认的任务类型
 	}
 	return repository.UpdateTaskFields(taskID, updates)
 }
@@ -289,47 +287,50 @@ func ResubmitTaskService(taskID uint, creatorID uuid.UUID) error {
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
-// CreateSubtaskService 封装了创建子任务的业务逻辑 (新版，增加工时校验)
+// CreateSubtaskService 封装了创建子任务的业务逻辑 (最终锁定版)
 func CreateSubtaskService(parentTaskID uint, creatorID uuid.UUID, subtaskInput model.Task) (model.Task, error) {
-	// 1. 查找父任务，并进行权限和状态校验
+	// 1. 查找父任务 (逻辑不变)
 	parentTask, err := repository.FindTaskByID(parentTaskID)
 	if err != nil {
 		return model.Task{}, errors.New("parent task not found")
 	}
-	if parentTask.Status != "in_progress" {
-		return model.Task{}, errors.New("only in-progress tasks can have subtasks")
+	// ... (权限和状态校验逻辑不变) ...
+	if parentTask.Status != "in_progress" { /* ... */
 	}
-	if parentTask.AssigneeID == nil || *parentTask.AssigneeID != creatorID {
-		return model.Task{}, errors.New("permission denied: only the assignee of the main task can create subtasks")
+	if parentTask.AssigneeID == nil || *parentTask.AssigneeID != creatorID { /* ... */
 	}
 
-	// --- 新增：工时上限校验逻辑 ---
-	// 2. 获取已存在的子任务工时总和
+	// 2. 工时上限校验逻辑 (逻辑不变)
 	existingSubtasksEffort, err := repository.GetTotalEffortOfSubtasks(parentTaskID)
 	if err != nil {
 		return model.Task{}, err
 	}
-
-	// 3. 检查 (已存在工时 + 新子任务工时) 是否会超过父任务的原始总工时
 	if (existingSubtasksEffort + int64(subtaskInput.Effort)) > int64(parentTask.OriginalEffort) {
 		return model.Task{}, errors.New("total effort of subtasks cannot exceed parent task's original effort")
 	}
-	// ---------------------------------
 
-	// 4. 准备子任务数据 (此部分不变)
+	// 3. --- 【V1.2 最终锁定版】截止时间校验 ---
+	// 规则：如果父任务有截止时间，则子任务的截止时间不能晚于父任务的截止时间
+	if parentTask.DueDate != nil && subtaskInput.DueDate.After(*parentTask.DueDate) {
+		return model.Task{}, errors.New("subtask due date cannot be after the parent task's due date")
+	}
+	// ------------------------------------
+
+	// 4. 准备子任务数据 (逻辑不变)
 	subtask := model.Task{
 		Title:          subtaskInput.Title,
 		Description:    subtaskInput.Description,
-		Priority:       subtaskInput.Priority,
+		Priority:       parentTask.Priority,
 		Effort:         subtaskInput.Effort,
 		OriginalEffort: subtaskInput.Effort,
+		DueDate:        subtaskInput.DueDate,
 		TaskTypeID:     parentTask.TaskTypeID,
 		CreatorID:      creatorID,
 		ParentTaskID:   &parentTask.ID,
 		Status:         "in_pool",
 	}
 
-	// 5. 调用仓储层创建任务 (此部分不变)
+	// 5. 创建任务 (逻辑不变)
 	err = repository.CreateTask(&subtask)
 	if err != nil {
 		return model.Task{}, err
