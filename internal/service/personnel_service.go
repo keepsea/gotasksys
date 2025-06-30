@@ -6,14 +6,25 @@ import (
 	"time"
 )
 
+// --- 新增：用于API响应的、更丰富的绩效数据结构 ---
+type PerformanceMetricsDto struct {
+	CompositeScore   float64 `json:"composite_score"`
+	AvgTimeliness    float64 `json:"avg_timeliness"`
+	AvgQuality       float64 `json:"avg_quality"`
+	AvgCollaboration float64 `json:"avg_collaboration"`
+	AvgComplexity    float64 `json:"avg_complexity"`
+}
+
+// --- 修改 PersonnelStatus 结构体，使其包含上面这个新结构 ---
 type PersonnelStatus struct {
-	UserID         string     `json:"user_id"`
-	RealName       string     `json:"real_name"`
-	Role           string     `json:"role"`
-	CurrentLoad    int        `json:"current_load"`     // 当前总工时
-	StatusLight    string     `json:"status_light"`     // 状态灯: idle, normal, busy, overloaded
-	ActiveTasks    []TaskInfo `json:"active_tasks"`     // 进行中的任务列表
-	HasOverdueTask bool       `json:"has_overdue_task"` // 是否有超期任务
+	UserID             string                 `json:"user_id"`
+	RealName           string                 `json:"real_name"`
+	Role               string                 `json:"role"`
+	CurrentLoad        int                    `json:"current_load"`
+	StatusLight        string                 `json:"status_light"`
+	ActiveTasks        []TaskInfo             `json:"active_tasks"`
+	HasOverdueTask     bool                   `json:"has_overdue_task"`
+	PerformanceMetrics *PerformanceMetricsDto `json:"performance_metrics,omitempty"` // 使用指针，如果没有数据则为null
 }
 
 type TaskInfo struct {
@@ -21,6 +32,7 @@ type TaskInfo struct {
 	Title string `json:"title"`
 }
 
+// --- 修改 GetPersonnelStatusService 函数，填充新的数据结构 ---
 func GetPersonnelStatusService() ([]PersonnelStatus, error) {
 	members, err := repository.FindAllActiveMembers()
 	if err != nil {
@@ -29,16 +41,11 @@ func GetPersonnelStatusService() ([]PersonnelStatus, error) {
 
 	var statuses []PersonnelStatus
 	for _, member := range members {
-		tasks, err := repository.FindInProgressTasksByAssigneeID(member.ID)
-		if err != nil {
-			// 如果单个用户查询失败，可以记录日志但继续处理其他用户
-			continue
-		}
-
+		// 获取进行中的任务和负载 (逻辑不变)
+		tasks, _ := repository.FindInProgressTasksByAssigneeID(member.ID)
 		var currentLoad int
 		var activeTasks []TaskInfo
 		var hasOverdueTask bool
-
 		for _, task := range tasks {
 			currentLoad += task.Effort
 			activeTasks = append(activeTasks, TaskInfo{ID: task.ID, Title: task.Title})
@@ -47,14 +54,34 @@ func GetPersonnelStatusService() ([]PersonnelStatus, error) {
 			}
 		}
 
+		// --- 核心修改：获取并计算历史绩效分 ---
+		var performanceMetrics *PerformanceMetricsDto
+		// 我们只为 'executor' 计算绩效分
+		if member.Role == "executor" {
+			metrics, err := repository.GetPerformanceMetricsForUser(member.ID)
+			if err == nil { // 如果查询出错，绩效分部分就为null
+				compositeScore := (metrics.AvgTimeliness + metrics.AvgQuality + metrics.AvgCollaboration + metrics.AvgComplexity) / 4.0
+
+				performanceMetrics = &PerformanceMetricsDto{
+					CompositeScore:   compositeScore,
+					AvgTimeliness:    metrics.AvgTimeliness,
+					AvgQuality:       metrics.AvgQuality,
+					AvgCollaboration: metrics.AvgCollaboration,
+					AvgComplexity:    metrics.AvgComplexity,
+				}
+			}
+		}
+		// ------------------------------------
+
 		status := PersonnelStatus{
-			UserID:         member.ID.String(),
-			RealName:       member.RealName,
-			Role:           member.Role,
-			CurrentLoad:    currentLoad,
-			ActiveTasks:    activeTasks,
-			HasOverdueTask: hasOverdueTask,
-			StatusLight:    calculateStatusLight(currentLoad),
+			UserID:             member.ID.String(),
+			RealName:           member.RealName,
+			Role:               member.Role,
+			CurrentLoad:        currentLoad,
+			StatusLight:        calculateStatusLight(currentLoad),
+			ActiveTasks:        activeTasks,
+			HasOverdueTask:     hasOverdueTask,
+			PerformanceMetrics: performanceMetrics, // 赋值
 		}
 		statuses = append(statuses, status)
 	}

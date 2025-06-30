@@ -25,10 +25,17 @@ func CreateUser(user *model.User) error {
 	return result.Error
 }
 
-// FindAllActiveMembers 查找所有需要被看板管理的活跃成员
+// --- 【V1.2 最终修正】获取所有活跃的团队成员 ---
+// FindAllActiveMembers 获取所有应在人员看板上展示的成员 (manager 和 executor)
 func FindAllActiveMembers() ([]model.User, error) {
-	var users []model.User
-	// 我们假设看板只需要展示 manager 和 member
-	result := config.DB.Where("role = ? OR role = ?", "manager", "member").Find(&users)
-	return users, result.Error
+	var members []model.User
+	// 定义需要展示在看板上的角色
+	rolesToShow := []string{"manager", "executor"}
+
+	// 查询所有角色为 manager 或 executor 的用户
+	result := config.DB.Where("role IN (?)", rolesToShow).Find(&members)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return members, nil
 }

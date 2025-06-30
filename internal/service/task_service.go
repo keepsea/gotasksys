@@ -3,6 +3,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"gotasksys/internal/model"
 	"gotasksys/internal/repository"
@@ -50,21 +51,39 @@ func GetTaskByIDService(id uint) (model.Task, error) {
 	return repository.FindTaskByID(id)
 }
 
-// UpdateTaskService 封装了更新任务的业务逻辑
-func UpdateTaskService(id uint, input model.Task) (model.Task, error) {
+// UpdateTaskService 封装了更新任务的业务逻辑 (最终锁定版)
+func UpdateTaskService(taskID uint, currentUser model.User, updateData model.Task) (model.Task, error) {
 	// 1. 先根据ID查找出要更新的任务
-	task, err := repository.FindTaskByID(id)
+	task, err := repository.FindTaskByID(taskID)
 	if err != nil {
-		return model.Task{}, err // 如果任务不存在，则返回错误
+		return model.Task{}, errors.New("task not found")
 	}
 
-	// 2. 更新字段 (这里我们先简单地更新几个核心字段)
-	task.Title = input.Title
-	task.Description = input.Description
-	task.Priority = input.Priority
-	task.Effort = input.Effort
+	// 2. --- 【V1.2 最终锁定版】权限校验 ---
+	hasPermission := false
+	// 规则一: Manager或Admin总是有权限
+	if currentUser.Role == "manager" || currentUser.Role == "system_admin" {
+		hasPermission = true
+	}
+	// 规则三: 如果任务状态是'rejected'，且创建者是当前用户，则有权限
+	if !hasPermission && task.Status == "rejected" && task.CreatorID == currentUser.ID {
+		hasPermission = true
+	}
+	// **注意：我们已根据您的要求，移除了允许Assignee修改的规则**
 
-	// 3. 将修改后的完整任务对象存回数据库
+	if !hasPermission {
+		return model.Task{}, errors.New("permission denied: you are not authorized to update this task")
+	}
+	// ------------------------------------------
+
+	// 3. 更新字段 (逻辑保持不变)
+	task.Title = updateData.Title
+	task.Description = updateData.Description
+	task.Priority = updateData.Priority
+	// 注意：工时(Effort)的修改权限可以后续再细化，V1.0中暂时允许在有权限时修改
+	task.Effort = updateData.Effort
+
+	// 4. 将修改后的完整任务对象存回数据库 (逻辑保持不变)
 	err = repository.UpdateTask(&task)
 	if err != nil {
 		return model.Task{}, err
@@ -85,9 +104,7 @@ func DeleteTaskService(id uint) error {
 	return repository.DeleteTask(id)
 }
 
-// ApproveTaskService 封装了审批任务的业务逻辑
-func ApproveTaskService(taskID uint, reviewerID uuid.UUID) error {
-	// 1. 确保任务存在且状态正确
+func ApproveTaskService(taskID uint, reviewerID uuid.UUID, effort int) error {
 	task, err := repository.FindTaskByID(taskID)
 	if err != nil {
 		return errors.New("task not found")
@@ -95,15 +112,17 @@ func ApproveTaskService(taskID uint, reviewerID uuid.UUID) error {
 	if task.Status != "pending_review" {
 		return errors.New("task is not in pending_review status")
 	}
-
-	// 2. 准备要更新的字段
-	updates := map[string]interface{}{
-		"status":      "in_pool", // 新状态
-		"reviewer_id": reviewerID,
-		"approved_at": time.Now(),
+	if effort <= 0 {
+		return errors.New("effort must be greater than zero")
 	}
 
-	// 3. 调用仓储层更新任务
+	updates := map[string]interface{}{
+		"status":          "in_pool",
+		"reviewer_id":     reviewerID,
+		"approved_at":     time.Now(),
+		"effort":          effort, // 在审批时设定工时
+		"original_effort": effort, // 同时记录原始工时
+	}
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
@@ -132,7 +151,7 @@ func ClaimTaskService(taskID uint, assigneeID uuid.UUID) error {
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
-// CompleteTaskService 封装了完成任务并提交评价的业务逻辑
+// CompleteTaskService 封装了完成任务并提交评价的业务逻辑 (最终版)
 func CompleteTaskService(taskID uint, currentUserID uuid.UUID) error {
 	// 1. 查找任务
 	task, err := repository.FindTaskByID(taskID)
@@ -144,39 +163,91 @@ func CompleteTaskService(taskID uint, currentUserID uuid.UUID) error {
 	if task.Status != "in_progress" {
 		return errors.New("task is not in progress")
 	}
-	// 权限校验：只有当前负责人才能完成任务
 	if task.AssigneeID == nil || *task.AssigneeID != currentUserID {
 		return errors.New("permission denied: you are not the assignee of this task")
 	}
 
-	// 3. 准备更新
+	// --- 【V1.2 最终修正】主任务完成的前置条件校验 ---
+	// 3. 检查这是否是一个主任务 (即没有parent_task_id)
+	if task.ParentTaskID == nil {
+		// 如果是主任务，则检查其下是否有未完成的子任务
+		incompleteSubtasks, err := repository.CountIncompleteSubtasks(task.ID)
+		if err != nil {
+			return err // 如果查询出错，也中断操作
+		}
+		if incompleteSubtasks > 0 {
+			return errors.New("cannot complete main task: there are still incomplete subtasks")
+		}
+	}
+	// ----------------------------------------------------
+
+	// 4. 准备更新
 	updates := map[string]interface{}{
 		"status": "pending_evaluation",
 	}
 
-	// 4. 更新数据库
+	// 5. 更新数据库
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
-// EvaluateTaskService 封装了评价任务的业务逻辑
-func EvaluateTaskService(taskID uint, evaluationData datatypes.JSON) error {
-	// 1. 查找任务并校验状态
-	task, err := repository.FindTaskByID(taskID)
+// EvaluateTaskService 封装了评价任务的业务逻辑 (最终版)
+func EvaluateTaskService(taskID uint, currentUser model.User, evaluationData datatypes.JSON) error {
+	// 1. 查找待评价的任务
+	taskToEvaluate, err := repository.FindTaskByID(taskID)
 	if err != nil {
 		return errors.New("task not found")
 	}
-	if task.Status != "pending_evaluation" {
+	if taskToEvaluate.Status != "pending_evaluation" {
 		return errors.New("task is not pending evaluation")
 	}
 
-	// 2. 准备更新
+	// 2. --- 【V1.2 最终修正】重写权限校验逻辑 ---
+	hasPermission := false
+	// 场景一：这是一个主任务 (没有父任务ID)
+	if taskToEvaluate.ParentTaskID == nil {
+		// 规则：主任务只能由 manager 或 system_admin 评价
+		if currentUser.Role == "manager" || currentUser.Role == "system_admin" {
+			hasPermission = true
+		}
+	} else { // 场景二：这是一个子任务
+		// 规则：子任务只能由其父任务的负责人评价
+		parentTask, err := repository.FindTaskByID(*taskToEvaluate.ParentTaskID)
+		// 必须成功找到父任务，且父任务的负责人(Assignee)正好是当前操作的用户
+		if err == nil && parentTask.AssigneeID != nil && *parentTask.AssigneeID == currentUser.ID {
+			hasPermission = true
+		}
+	}
+
+	if !hasPermission {
+		return errors.New("permission denied: you are not authorized to evaluate this task")
+	}
+	// ------------------------------------
+
+	// 3. 计算综合得分 (逻辑保持不变)
+	var evalMap map[string]interface{}
+	if err := json.Unmarshal(evaluationData, &evalMap); err == nil {
+		timeliness, ok1 := evalMap["timeliness"].(float64)
+		quality, ok2 := evalMap["quality"].(float64)
+		collaboration, ok3 := evalMap["collaboration"].(float64)
+		complexity, ok4 := evalMap["complexity"].(float64)
+		if ok1 && ok2 && ok3 && ok4 {
+			compositeScore := (timeliness + quality + collaboration + complexity) / 4.0
+			evalMap["composite_score"] = compositeScore
+			updatedEvaluationData, _ := json.Marshal(evalMap)
+			evaluationData = updatedEvaluationData
+		} else {
+			return errors.New("evaluation data must contain all four dimensions with numeric values")
+		}
+	} else {
+		return errors.New("invalid evaluation data format")
+	}
+
+	// 4. 更新数据库 (逻辑保持不变)
 	updates := map[string]interface{}{
 		"status":       "completed",
 		"evaluation":   evaluationData,
 		"completed_at": time.Now(),
 	}
-
-	// 3. 更新数据库
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
@@ -218,36 +289,47 @@ func ResubmitTaskService(taskID uint, creatorID uuid.UUID) error {
 	return repository.UpdateTaskFields(taskID, updates)
 }
 
-// CreateSubtaskService 封装了创建子任务的业务逻辑
+// CreateSubtaskService 封装了创建子任务的业务逻辑 (新版，增加工时校验)
 func CreateSubtaskService(parentTaskID uint, creatorID uuid.UUID, subtaskInput model.Task) (model.Task, error) {
 	// 1. 查找父任务，并进行权限和状态校验
 	parentTask, err := repository.FindTaskByID(parentTaskID)
 	if err != nil {
 		return model.Task{}, errors.New("parent task not found")
 	}
-	// 只有进行中的任务才能创建子任务
 	if parentTask.Status != "in_progress" {
 		return model.Task{}, errors.New("only in-progress tasks can have subtasks")
 	}
-	// 只有主任务的负责人才能创建子任务
 	if parentTask.AssigneeID == nil || *parentTask.AssigneeID != creatorID {
 		return model.Task{}, errors.New("permission denied: only the assignee of the main task can create subtasks")
 	}
 
-	// 2. 准备子任务数据
+	// --- 新增：工时上限校验逻辑 ---
+	// 2. 获取已存在的子任务工时总和
+	existingSubtasksEffort, err := repository.GetTotalEffortOfSubtasks(parentTaskID)
+	if err != nil {
+		return model.Task{}, err
+	}
+
+	// 3. 检查 (已存在工时 + 新子任务工时) 是否会超过父任务的原始总工时
+	if (existingSubtasksEffort + int64(subtaskInput.Effort)) > int64(parentTask.OriginalEffort) {
+		return model.Task{}, errors.New("total effort of subtasks cannot exceed parent task's original effort")
+	}
+	// ---------------------------------
+
+	// 4. 准备子任务数据 (此部分不变)
 	subtask := model.Task{
 		Title:          subtaskInput.Title,
 		Description:    subtaskInput.Description,
 		Priority:       subtaskInput.Priority,
 		Effort:         subtaskInput.Effort,
 		OriginalEffort: subtaskInput.Effort,
-		TaskTypeID:     parentTask.TaskTypeID, // 子任务默认继承父任务的类型
-		CreatorID:      creatorID,             // 创建者是当前操作用户
-		ParentTaskID:   &parentTask.ID,        // 关联父任务
-		Status:         "in_pool",             // 子任务直接进入任务池
+		TaskTypeID:     parentTask.TaskTypeID,
+		CreatorID:      creatorID,
+		ParentTaskID:   &parentTask.ID,
+		Status:         "in_pool",
 	}
 
-	// 3. 调用仓储层创建任务
+	// 5. 调用仓储层创建任务 (此部分不变)
 	err = repository.CreateTask(&subtask)
 	if err != nil {
 		return model.Task{}, err

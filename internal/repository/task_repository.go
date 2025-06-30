@@ -75,3 +75,63 @@ func ListTasksForCreator(creatorID uuid.UUID) ([]model.Task, error) {
 		Find(&tasks)
 	return tasks, result.Error
 }
+
+// GetTotalEffortOfSubtasks 获取一个父任务下所有子任务的工时总和
+func GetTotalEffortOfSubtasks(parentTaskID uint) (int64, error) {
+	var totalEffort int64
+	// 使用 GORM 的 Select 和 Where 来构建 SUM 查询
+	result := config.DB.Model(&model.Task{}).
+		Where("parent_task_id = ?", parentTaskID).
+		Select("COALESCE(SUM(effort), 0)"). // COALESCE 确保在没有子任务时返回0而不是NULL
+		Row().
+		Scan(&totalEffort)
+
+	if result != nil {
+		return 0, result
+	}
+	return totalEffort, nil
+}
+
+// CountIncompleteSubtasks 获取一个父任务下未完成的子任务数量
+func CountIncompleteSubtasks(parentTaskID uint) (int64, error) {
+	var count int64
+	// 我们定义 "未完成" 的状态是不等于 'completed'
+	result := config.DB.Model(&model.Task{}).
+		Where("parent_task_id = ? AND status != ?", parentTaskID, "completed").
+		Count(&count)
+
+	return count, result.Error
+}
+
+// PerformanceMetrics 定义了从数据库聚合查询返回的结构
+type PerformanceMetrics struct {
+	AvgTimeliness    float64
+	AvgQuality       float64
+	AvgCollaboration float64
+	AvgComplexity    float64
+}
+
+// GetPerformanceMetricsForUser 获取一个用户所有已完成任务的各项评价平均分
+func GetPerformanceMetricsForUser(userID uuid.UUID) (PerformanceMetrics, error) {
+	var metrics PerformanceMetrics
+
+	// 我们使用原生SQL查询，因为JSON字段的聚合操作非常复杂，原生SQL更清晰高效
+	query := `
+		SELECT 
+			COALESCE(AVG((evaluation->>'timeliness')::numeric), 0) as avg_timeliness,
+			COALESCE(AVG((evaluation->>'quality')::numeric), 0) as avg_quality,
+			COALESCE(AVG((evaluation->>'collaboration')::numeric), 0) as avg_collaboration,
+			COALESCE(AVG((evaluation->>'complexity')::numeric), 0) as avg_complexity
+		FROM 
+			tasks
+		WHERE 
+			assignee_id = ? AND status = 'completed' AND evaluation IS NOT NULL;
+	`
+
+	result := config.DB.Raw(query, userID).Scan(&metrics)
+	if result.Error != nil {
+		return PerformanceMetrics{}, result.Error
+	}
+
+	return metrics, nil
+}

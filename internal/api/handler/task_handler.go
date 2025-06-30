@@ -4,6 +4,7 @@ package handler
 
 import (
 	"gotasksys/internal/model"
+	"gotasksys/internal/repository"
 	"gotasksys/internal/service" // 引入service层
 	"net/http"
 	"strconv"
@@ -18,40 +19,33 @@ type CreateTaskInput struct {
 	Title       string `json:"title" binding:"required"`
 	Description string `json:"description"`
 	Priority    string `json:"priority" binding:"required"`
-	Effort      int    `json:"effort"`
-	TaskTypeID  string `json:"task_type_id" binding:"required,uuid"`
+	//Effort      int    `json:"effort"`
+	TaskTypeID string `json:"task_type_id" binding:"required,uuid"`
 }
 
 // CreateTask 现在只负责参数解析和调用service
+// CreateTask 创建任务时不再处理工时
 func CreateTask(c *gin.Context) {
 	var input CreateTaskInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	creatorIDStr, _ := c.Get("user_id")
-	creatorID, _ := uuid.Parse(creatorIDStr.(string))
-
+	creatorID, _ := uuid.Parse(c.GetString("user_id"))
 	taskTypeID, _ := uuid.Parse(input.TaskTypeID)
 
-	// 将输入参数组装成模型对象
 	taskModel := model.Task{
 		Title:       input.Title,
 		Description: input.Description,
 		Priority:    input.Priority,
-		Effort:      input.Effort,
 		TaskTypeID:  taskTypeID,
 		CreatorID:   creatorID,
 	}
-
-	// 将业务逻辑委托给service层
 	createdTask, err := service.CreateTaskService(taskModel)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task", "details": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusCreated, createdTask)
 }
 
@@ -102,7 +96,7 @@ type UpdateTaskInput struct {
 	Effort      int    `json:"effort"`
 }
 
-// UpdateTask 更新一个已存在的任务
+// UpdateTask 更新一个已存在的任务 (最终权限版)
 func UpdateTask(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -117,6 +111,14 @@ func UpdateTask(c *gin.Context) {
 		return
 	}
 
+	// 从Context中获取当前用户的ID，并从数据库中查出完整的用户信息
+	currentUserID, _ := uuid.Parse(c.GetString("user_id"))
+	currentUser, err := repository.FindUserByID(currentUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve current user info"})
+		return
+	}
+
 	updateData := model.Task{
 		Title:       input.Title,
 		Description: input.Description,
@@ -124,10 +126,15 @@ func UpdateTask(c *gin.Context) {
 		Effort:      input.Effort,
 	}
 
-	updatedTask, err := service.UpdateTaskService(uint(id), updateData)
+	// 调用Service层，并传入当前用户信息用于权限判断
+	updatedTask, err := service.UpdateTaskService(uint(id), currentUser, updateData)
 	if err != nil {
-		if err.Error() == "record not found" { // gorm.ErrRecordNotFound 的字符串形式
+		if err.Error() == "record not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+			return
+		}
+		if err.Error() == "permission denied: you are not authorized to update this task" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
@@ -167,34 +174,36 @@ func DeleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
 
-// ApproveTask 批准一个待审核的任务
+// --- 新增：为审批任务定义的输入结构 ---
+type ApproveTaskInput struct {
+	Effort int `json:"effort" binding:"required,gt=0"`
+}
+
+// ApproveTask 批准任务时接收并设定工时
 func ApproveTask(c *gin.Context) {
-	// 权限校验
 	userRole, _ := c.Get("user_role")
 	if userRole != "manager" && userRole != "system_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can approve tasks."})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied"})
 		return
 	}
-
-	// 获取任务ID
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
 		return
 	}
+	var input ApproveTaskInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	reviewerID, _ := uuid.Parse(c.GetString("user_id"))
 
-	// 获取审批人ID
-	reviewerIDStr, _ := c.Get("user_id")
-	reviewerID, _ := uuid.Parse(reviewerIDStr.(string))
-
-	// 调用Service层处理业务逻辑
-	err = service.ApproveTaskService(uint(taskID), reviewerID)
+	err = service.ApproveTaskService(uint(taskID), reviewerID, input.Effort)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "Task approved successfully and moved to pool."})
 }
 
@@ -236,7 +245,7 @@ func ClaimTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task claimed successfully."})
 }
 
-// CompleteTask 允许负责人完成任务并提交评价
+// CompleteTask 允许负责人完成任务并提交评价 (最终版)
 func CompleteTask(c *gin.Context) {
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
@@ -244,18 +253,19 @@ func CompleteTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
 		return
 	}
-
-	// 从中间件获取当前操作用户的ID
 	currentUserIDStr, _ := c.Get("user_id")
 	currentUserID, _ := uuid.Parse(currentUserIDStr.(string))
 
-	// 调用Service层处理业务逻辑
 	err = service.CompleteTaskService(uint(taskID), currentUserID)
 	if err != nil {
 		// 根据错误类型返回不同的HTTP状态码
 		switch err.Error() {
 		case "task not found":
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// --- 新增：处理主任务完成前置条件失败的错误 ---
+		case "cannot complete main task: there are still incomplete subtasks":
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		// ------------------------------------------
 		case "permission denied: you are not the assignee of this task":
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		case "task is not in progress":
@@ -265,7 +275,6 @@ func CompleteTask(c *gin.Context) {
 		}
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "Task completed and submitted for evaluation."})
 }
 
@@ -276,14 +285,9 @@ type EvaluateTaskInput struct {
 	Evaluation datatypes.JSON `json:"evaluation" binding:"required"`
 }
 
-// EvaluateTask 允许管理者评价一个已完成的任务
+// EvaluateTask 允许特定权限用户评价一个已完成的任务 (最终版)
 func EvaluateTask(c *gin.Context) {
-	// 权限校验
-	userRole, _ := c.Get("user_role")
-	if userRole != "manager" && userRole != "system_admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can evaluate tasks."})
-		return
-	}
+	// --- 不再在这里做简单的角色校验，将由Service层进行复杂的校验 ---
 
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
@@ -298,10 +302,24 @@ func EvaluateTask(c *gin.Context) {
 		return
 	}
 
-	// 调用Service层处理业务逻辑
-	err = service.EvaluateTaskService(uint(taskID), input.Evaluation)
+	// 从Context中获取当前用户的ID，并从数据库中查出完整的用户信息
+	currentUserIDStr, _ := c.Get("user_id")
+	currentUserID, _ := uuid.Parse(currentUserIDStr.(string))
+	currentUser, err := repository.FindUserByID(currentUserID) // 复用我们已有的repository方法
 	if err != nil {
-		if err.Error() == "task not found" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve current user info"})
+		return
+	}
+
+	// 调用Service层处理业务逻辑，传入完整的用户信息
+	err = service.EvaluateTaskService(uint(taskID), currentUser, input.Evaluation)
+	if err != nil {
+		// 根据Service返回的错误类型，给出不同的HTTP响应
+		if err.Error() == "permission denied: you are not authorized to evaluate this task" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task not found" || err.Error() == "parent task not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
@@ -421,25 +439,19 @@ type CreateSubtaskInput struct {
 
 // CreateSubtask 为一个任务创建子任务 (最终修正版)
 func CreateSubtask(c *gin.Context) {
-	// 从URL获取父任务ID
 	parentTaskIDStr := c.Param("id")
 	parentTaskID, err := strconv.ParseUint(parentTaskIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid parent task ID"})
 		return
 	}
-
-	// 使用新的、专用的输入结构体来解析请求体
 	var input CreateSubtaskInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// 从中间件获取当前用户ID (即子任务的创建者)
 	creatorID, _ := uuid.Parse(c.GetString("user_id"))
 
-	// 将解析到的数据组装成Task模型，注意这里不包含TaskTypeID
 	subtaskInput := model.Task{
 		Title:       input.Title,
 		Description: input.Description,
@@ -447,9 +459,14 @@ func CreateSubtask(c *gin.Context) {
 		Effort:      input.Effort,
 	}
 
-	// 调用Service层处理业务逻辑 (Service层会自动从父任务继承TaskTypeID)
 	createdSubtask, err := service.CreateSubtaskService(uint(parentTaskID), creatorID, subtaskInput)
 	if err != nil {
+		// --- 新增：处理工时超限的错误 ---
+		if err.Error() == "total effort of subtasks cannot exceed parent task's original effort" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// ---------------------------------
 		if err.Error() == "permission denied: only the assignee of the main task can create subtasks" {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
@@ -457,6 +474,5 @@ func CreateSubtask(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusCreated, createdSubtask)
 }
