@@ -1,28 +1,8 @@
-### Register a new system admin user
-POST http://localhost:8080/api/v1/register
-Content-Type: application/json
+### ================================================
+### 任务1：系统管理员创建各类角色的用户
+### ================================================
 
-{
-  "username": "member2",
-  "password": "Password123!@#",
-  "real_name": "普通用户",
-  "role": "member"
-}
-
-### Login with the registered user
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "member",
-  "password": "Password123!@#"
-}
-### (测试1) 尝试在没有通行证的情况下访问受保护接口 (预期会失败)
-GET http://localhost:8080/api/v1/profile
-
-
-### (测试2) 使用通行证访问受保护接口 (预期会成功)
-# @name login_for_token
+# @name login_as_admin
 POST http://localhost:8080/api/v1/login
 Content-Type: application/json
 
@@ -31,270 +11,150 @@ Content-Type: application/json
   "password": "Password123!@#"
 }
 
-# 使用上面请求获取到的token
-@token = {{login_for_token.response.body.token}}
+@admin_token = {{login_as_admin.response.body.token}}
 
-###
-GET http://localhost:8080/api/v1/profile
-Authorization: Bearer {{token}}
-
-### (测试3) 创建一个新任务 (需要登录)
-# 使用登录请求来获取一个有效的token
-# @name login_for_task_creation
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "manager",
-  "password": "Password123!@#"
-}
-
-@token = {{login_for_task_creation.response.body.token}}
-
-###创建一个任务
-POST http://localhost:8080/api/v1/tasks
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-    "title": "测试任务12",
-    "description": "需要汇总所有安全事件，并形成最终报告文档。",
-    "priority": "P1",
-    "effort": 16,
-    "task_type_id": "5c508dd3-4bc5-4ee7-8a71-f207d609e79d"
-}
-
-### (测试4) 获取任务列表 (需要登录)
-
-# 我们仍然需要一个有效的token
-# @name login_for_listing_tasks
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "Password123!@#"
-}
-
-@token = {{login_for_listing_tasks.response.body.token}}
-
-###
-GET http://localhost:8080/api/v1/tasks
-Authorization: Bearer {{token}}
-### (测试5) 获取单个任务详情 (需要登录)
-
-# 我们仍然需要一个有效的token
-@token = {{login_for_listing_tasks.response.body.token}}
-
-###
-# 注意：请将下面URL末尾的 1 替换为您从测试4中复制的真实任务ID
-GET http://localhost:8080/api/v1/tasks/9
-Authorization: Bearer {{token}}
-
-### (测试6) 更新一个已存在的任务 (需要登录)
-
-@token = {{login_for_listing_tasks.response.body.token}}
-
-###
-# 注意：请将下面URL末尾的 1 替换为您复制的真实任务ID
-PATCH http://localhost:8080/api/v1/tasks/6
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-    "title": "【已更新】部署第一季度的安全审计报告",
-    "description": "需要汇总所有安全事件，并形成最终报告文档。补充：需要加入风险评级。",
-    "priority": "P0",
-    "effort": 20
-}
-
-### (测试7) 删除一个任务 (需要manager权限)
-
-# 使用 manager 账号登录获取 token
-# @name login_as_manager_for_delete
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "manager",
-  "password": "Password123!@#"
-}
-
-@token = {{login_as_manager_for_delete.response.body.token}}
-
-###
-# 注意：请将下面URL末尾的 ID 替换为您刚刚创建的待删除任务的真实ID
-DELETE http://localhost:8080/api/v1/tasks/7
-Authorization: Bearer {{token}}
-
-### (测试8 - 修正版) 验证审批流程
-
-# 步骤A: 确保我们以 manager 身份登录，并将token存入一个全新的、不会被干扰的变量
-# @name login_as_approver
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "manager",
-  "password": "Password123!@#"
-}
-
-# 步骤B: 使用上面刚刚获取的、确定无疑的 manager token 去审批任务
-@approver_token = {{login_as_approver.response.body.token}}
-
-###
-# 使用这个全新的 @approver_token 变量
-POST http://localhost:8080/api/v1/tasks/7/approve
-Authorization: Bearer {{approver_token}}
-
-### (测试9) 领取一个任务 (需要member权限)
-
-# 步骤A: 使用 member 账号登录，获取他的token
-# @name login_as_member_for_claim
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "manager",
-  "password": "Password123!@#"
-}
-
-@member_token = {{login_as_member_for_claim.response.body.token}}
-
-###
-# 步骤B: member 使用他的token去领取那个已被批准的任务
-# 注意：请将下面URL末尾的 ID 替换为您准备好的待领取任务的真实ID
-POST http://localhost:8080/api/v1/tasks/7/claim
-Authorization: Bearer {{member_token}}
-
-### (测试10) 完成一个进行中的任务
-
-# 步骤A: 使用那个领取了任务的 member 账号登录，获取他的token
-@member_token = {{login_as_member_for_claim.response.body.token}}
-
-###
-# 步骤B: member 使用他的token去完成那个他负责的任务
-# 注意：请将下面URL末尾的 ID 替换为您准备好的进行中任务的真实ID
-POST http://localhost:8080/api/v1/tasks/8/complete
-Authorization: Bearer {{member_token}}
-
-### (测试11) 评价一个已完成的任务
-
-# 步骤A: 使用 manager 账号登录，获取他的token
-@manager_token = {{login_as_manager_for_delete.response.body.token}}
-
-###
-# 步骤B: manager 使用他的token去评价那个待评价的任务
-# 注意：请将下面URL末尾的 ID 替换为您准备好的待评价任务的真实ID
-POST http://localhost:8080/api/v1/tasks/9/evaluate
-Content-Type: application/json
-Authorization: Bearer {{manager_token}}
-
-{
-  "evaluation": {
-    "timeliness": 5,
-    "quality": 4.5,
-    "collaboration": 5,
-    "complexity": 3
-  }
-}
-
-### (测试12) 获取管理者驾驶舱数据
-
-# 使用 manager 账号登录获取 token
-@manager_token = {{login_as_manager_for_delete.response.body.token}}
-
-###
-GET http://localhost:8080/api/v1/dashboard/summary
-Authorization: Bearer {{manager_token}}
-### (测试13) 获取人员看板数据
-
-# 使用 manager 账号登录获取 token
-@manager_token = {{login_as_manager_for_delete.response.body.token}}
-
-###
-GET http://localhost:8080/api/v1/personnel/status
-Authorization: Bearer {{manager_token}}
-
-### (测试14) 获取任务类型列表 (需要system_admin权限)
-
-# 步骤A: 使用我们最早创建的 system_admin 角色的 admin 账号登录
-# @name login_as_sys_admin
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "Password123!@#"
-}
-
-@admin_token = {{login_as_sys_admin.response.body.token}}
-
-###
-# 步骤B: 获取列表
-GET http://localhost:8080/api/v1/admin/task-types
-Authorization: Bearer {{admin_token}}
-
-
-### (测试15) 创建一个新的任务类型 (需要system_admin权限)
-POST http://localhost:8080/api/v1/admin/task-types
-Content-Type: application/json
-Authorization: Bearer {{admin_token}}
-
-{
-    "name": "安全会2"
-}
-### (测试16) 最终验证：使用 manager 的 token 访问 admin 接口 (预期会失败)
-
-# 步骤A: 以 manager 身份登录，获取他的专属token
-# @name login_as_manager_to_test_fail
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "manager",
-  "password": "Password123!@#"
-}
-
-# 步骤B: 使用上面刚刚获取的、确定无疑的 manager token 来尝试访问 admin 接口
-@manager_token_for_fail_test = {{login_as_manager_to_test_fail.response.body.token}}
-
-###
-GET http://localhost:8080/api/v1/admin/task-types
-Authorization: Bearer {{manager_token_for_fail_test}}
-
-###  创建一个新的任务类型 (需要system_admin权限)
-POST http://localhost:8080/api/v1/admin/task-types
-Content-Type: application/json
-Authorization: Bearer {{manager_token_for_fail_test}}
-
-{
-    "name": "安全会2"
-}
-
-### (测试17) 管理员创建新用户 (需要system_admin权限)
-
-# 步骤A: 使用 system_admin 账号登录，获取管理员token
-# @name login_as_admin_for_user_creation
-POST http://localhost:8080/api/v1/login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "Password123!@#"
-}
-
-@admin_token_for_creation = {{login_as_admin_for_user_creation.response.body.token}}
-
-###
-# 步骤B: 使用管理员token，调用新的接口来创建一个新的"member"用户
+### (测试1.1) Admin 创建一个 Manager
 POST http://localhost:8080/api/v1/admin/users
 Content-Type: application/json
-Authorization: Bearer {{admin_token_for_creation}}
+Authorization: Bearer {{admin_token}}
 
 {
-  "username": "member4",
-  "password": "PasswordMember2!@#",
-  "real_name": "普通成员二号",
-  "role": "member"
+  "username": "manager_new",
+  "password": "Password123!@#",
+  "real_name": "项目经理-新",
+  "role": "manager"
 }
+
+### (测试1.2) Admin 创建一个 Executor
+POST http://localhost:8080/api/v1/admin/users
+Content-Type: application/json
+Authorization: Bearer {{admin_token}}
+
+{
+  "username": "executor_new",
+  "password": "Password123!@#",
+  "real_name": "核心执行人-新",
+  "role": "executor"
+}
+
+
+### (测试1.3) Admin 创建一个 Creator
+POST http://localhost:8080/api/v1/admin/users
+Content-Type: application/json
+Authorization: Bearer {{admin_token}}
+
+{
+  "username": "creator_new2",
+  "password": "Password123!@#",
+  "real_name": "外部创建者-新",
+  "role": "creator"
+}
+
+### (测试1.4) Admin 尝试创建一个无效角色 (预期会失败)
+POST http://localhost:8080/api/v1/admin/users
+Content-Type: application/json
+Authorization: Bearer {{admin_token}}
+
+{
+  "username": "invalid_user",
+  "password": "Password123!@#",
+  "real_name": "无效角色用户",
+  "role": "some_invalid_role"
+}
+
+
+### ================================================
+### 任务2：验证领取任务(claim)的权限
+### ================================================
+
+# 步骤A: Creator登录并创建一个任务
+# @name login_as_creator
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "creator_new2",
+  "password": "Password123!@#"
+}
+
+@creator_token = {{login_as_creator.response.body.token}}
+
+###
+# @name create_task_for_claim_test
+POST http://localhost:8080/api/v1/tasks
+Content-Type: application/json
+Authorization: Bearer {{creator_token}}
+
+{
+    "title": "权限测试任务-c2",
+    "description": "这个任务将被用来c2测试领取权限",
+    "priority": "P1",
+    "effort": 8,
+    "task_type_id": "85bac575-3d4f-4256-b8de-343e57355d9e"
+}
+
+@claim_test_task_id = {{create_task_for_claim_test.response.body.id}}
+
+
+# 步骤B: Manager登录并审批这个任务，使其进入任务池
+###
+# @name login_as_manager
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "manager_new",
+  "password": "Password123!@#"
+}
+
+@manager_token = {{login_as_manager.response.body.token}}
+
+###
+POST http://localhost:8080/api/v1/tasks/{{claim_test_task_id}}/approve
+Authorization: Bearer {{manager_token}}
+
+
+# 步骤C: 核心测试 - 用不同角色的Token尝试领取任务
+### (测试2.1) Creator 尝试领取任务 (预期403 Forbidden)
+POST http://localhost:8080/api/v1/tasks/{{claim_test_task_id}}/claim
+Authorization: Bearer {{creator_token}}
+
+
+### (测试2.2) Executor 尝试领取任务 (预期200 OK)
+# @name login_as_executor
+POST http://localhost:8080/api/v1/login
+Content-Type: application/json
+
+{
+  "username": "executor_new",
+  "password": "Password123!@#"
+}
+
+@executor_token = {{login_as_executor.response.body.token}}
+
+###
+POST http://localhost:8080/api/v1/tasks/{{claim_test_task_id}}/claim
+Authorization: Bearer {{executor_token}}
+
+### (测试3.1) 验证任务列表权限：以 Manager 身份查看
+# 预期结果：能看到数据库里的所有任务
+@manager_token = {{login_as_manager.response.body.token}}
+###
+GET http://localhost:8080/api/v1/tasks
+Authorization: Bearer {{manager_token}}
+
+
+### (测试3.2) 验证任务列表权限：以 Executor 身份查看
+# 预期结果：只能看到【任务池中的任务】+【分配给他自己的任务】
+@executor_token = {{login_as_executor.response.body.token}}
+###
+GET http://localhost:8080/api/v1/tasks
+Authorization: Bearer {{executor_token}}
+
+
+### (测试3.3) 验证任务列表权限：以 Creator 身份查看
+# 预期结果：只能看到【所有已通过审核的公开任务】+【他自己创建的待审核任务】
+@creator_token = {{login_as_creator.response.body.token}}
+###
+GET http://localhost:8080/api/v1/tasks
+Authorization: Bearer {{creator_token}}

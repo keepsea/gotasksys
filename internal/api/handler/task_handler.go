@@ -55,11 +55,17 @@ func CreateTask(c *gin.Context) {
 	c.JSON(http.StatusCreated, createdTask)
 }
 
-// ListTasks 现在只负责调用service并返回结果
+// ListTasks 获取任务列表，现在会根据用户角色返回不同内容
 func ListTasks(c *gin.Context) {
-	tasks, err := service.ListTasksService()
+	// 从中间件中获取用户信息
+	userRole, _ := c.Get("user_role")
+	userIDStr, _ := c.Get("user_id")
+	userID, _ := uuid.Parse(userIDStr.(string))
+
+	// 调用重构后的Service，并传入用户信息
+	tasks, err := service.ListTasksService(userRole.(string), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve tasks"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve tasks", "details": err.Error()})
 		return
 	}
 
@@ -194,7 +200,13 @@ func ApproveTask(c *gin.Context) {
 
 // ClaimTask 允许用户从任务池中领取任务
 func ClaimTask(c *gin.Context) {
-	// 任何登录的用户都可以领取任务，所以我们只检查登录状态，不校验角色
+	// --- 新增：角色权限校验 ---
+	userRole, _ := c.Get("user_role")
+	if userRole != "executor" && userRole != "manager" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only executors or managers can claim tasks."})
+		return
+	}
+	// ---------------------------
 
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
@@ -203,14 +215,12 @@ func ClaimTask(c *gin.Context) {
 		return
 	}
 
-	// 从中间件获取当前操作用户的ID
 	assigneeIDStr, _ := c.Get("user_id")
 	assigneeID, _ := uuid.Parse(assigneeIDStr.(string))
 
-	// 调用Service层处理业务逻辑
 	err = service.ClaimTaskService(uint(taskID), assigneeID)
+	// ...后续错误处理逻辑保持不变...
 	if err != nil {
-		// 如果任务状态不对或已被分配，返回409 Conflict更合适
 		if err.Error() == "task is not available to be claimed" || err.Error() == "task has already been assigned" {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
@@ -304,4 +314,149 @@ func EvaluateTask(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task evaluated successfully and marked as completed."})
+}
+
+// --- 新增：驳回与重提任务的处理器 ---
+
+// RejectTaskInput 定义了驳回任务时需要输入的参数
+type RejectTaskInput struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+// RejectTask 驳回一个待审核的任务
+func RejectTask(c *gin.Context) {
+	// 1. 权限校验：确保只有管理者可以执行此操作
+	userRole, _ := c.Get("user_role")
+	if userRole != "manager" && userRole != "system_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can reject tasks."})
+		return
+	}
+
+	// 2. 解析URL中的任务ID
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	// 3. 解析请求体中的驳回理由
+	var input RejectTaskInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reason is required"})
+		return
+	}
+
+	// 4. 获取当前操作者(即审批人)的ID
+	reviewerIDStr, _ := c.Get("user_id")
+	reviewerID, _ := uuid.Parse(reviewerIDStr.(string))
+
+	// 5. 调用Service层处理业务逻辑
+	err = service.RejectTaskService(uint(taskID), input.Reason, reviewerID)
+	if err != nil {
+		// 根据Service返回的错误类型，给出不同的HTTP响应
+		if err.Error() == "task not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task is not in pending_review status" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject task"})
+		return
+	}
+
+	// 6. 返回成功响应
+	c.JSON(http.StatusOK, gin.H{"message": "Task rejected."})
+}
+
+// ResubmitTask 重新提交一个被驳回的任务
+func ResubmitTask(c *gin.Context) {
+	// 1. 解析URL中的任务ID
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	// 2. 获取当前操作者(即任务创建人)的ID
+	creatorIDStr, _ := c.Get("user_id")
+	creatorID, _ := uuid.Parse(creatorIDStr.(string))
+
+	// 3. 调用Service层处理业务逻辑 (Service层内部会进行权限校验)
+	err = service.ResubmitTaskService(uint(taskID), creatorID)
+	if err != nil {
+		// 根据Service返回的错误类型，给出不同的HTTP响应
+		if err.Error() == "task not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "permission denied: only the creator can resubmit the task" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task is not in rejected status" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resubmit task"})
+		return
+	}
+
+	// 4. 返回成功响应
+	c.JSON(http.StatusOK, gin.H{"message": "Task resubmitted successfully."})
+}
+
+// CreateSubtask 为一个任务创建子任务
+type CreateSubtaskInput struct {
+	Title       string `json:"title" binding:"required"`
+	Description string `json:"description"`
+	Priority    string `json:"priority" binding:"required"`
+	Effort      int    `json:"effort" binding:"required,gte=1"`
+}
+
+// -----------------------------------------
+
+// CreateSubtask 为一个任务创建子任务 (最终修正版)
+func CreateSubtask(c *gin.Context) {
+	// 从URL获取父任务ID
+	parentTaskIDStr := c.Param("id")
+	parentTaskID, err := strconv.ParseUint(parentTaskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid parent task ID"})
+		return
+	}
+
+	// 使用新的、专用的输入结构体来解析请求体
+	var input CreateSubtaskInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 从中间件获取当前用户ID (即子任务的创建者)
+	creatorID, _ := uuid.Parse(c.GetString("user_id"))
+
+	// 将解析到的数据组装成Task模型，注意这里不包含TaskTypeID
+	subtaskInput := model.Task{
+		Title:       input.Title,
+		Description: input.Description,
+		Priority:    input.Priority,
+		Effort:      input.Effort,
+	}
+
+	// 调用Service层处理业务逻辑 (Service层会自动从父任务继承TaskTypeID)
+	createdSubtask, err := service.CreateSubtaskService(uint(parentTaskID), creatorID, subtaskInput)
+	if err != nil {
+		if err.Error() == "permission denied: only the assignee of the main task can create subtasks" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, createdSubtask)
 }

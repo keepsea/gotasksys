@@ -33,20 +33,27 @@ func RegisterUser(input model.User) (uuid.UUID, error) {
 	return input.ID, nil
 }
 
-func LoginUser(username, password string, jwtSecret string, jwtExpHours int) (string, error) {
+// LoginUser 验证用户凭据并返回用户对象和Token
+// 注意：返回值从 (string, error) 变为了 (model.User, string, error)
+func LoginUser(username, password string, jwtSecret string, jwtExpHours int) (model.User, string, error) {
+	// 1. 查找用户
 	user, err := repository.FindUserByUsername(username)
 	if err != nil {
-		return "", errors.New("user not found")
+		// 如果出错，返回一个空的User对象、空token和错误
+		return model.User{}, "", errors.New("user not found")
 	}
 
+	// 2. 验证密码
 	if !utils.CheckPasswordHash(password, user.PasswordHash) {
-		return "", errors.New("invalid credentials")
+		return model.User{}, "", errors.New("invalid credentials")
 	}
 
+	// 3. 生成JWT
 	token, err := utils.GenerateToken(user.ID, user.Role, jwtSecret, jwtExpHours)
 	if err != nil {
-		return "", errors.New("failed to generate token")
+		return model.User{}, "", errors.New("failed to generate token")
 	}
 
-	return token, nil
+	// 4. 成功时，返回完整的user对象、token字符串和nil错误
+	return user, token, nil
 }

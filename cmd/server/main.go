@@ -21,6 +21,7 @@ import (
 
 // main 函数是整个程序的起点
 func main() {
+	//log.Println("--- SERVER RESTART --- VERSION 1.2.6 --- (Final Check)")
 	// --- 步骤1: 加载应用配置 ---
 	// 从 config.yaml 文件中读取数据库地址、服务端口等所有配置信息
 	cfg, err := config.LoadConfig("config.yaml")
@@ -91,6 +92,16 @@ func main() {
 			// 看板和驾驶舱数据接口
 			authRequired.GET("/dashboard/summary", handler.GetDashboardSummary) // 获取驾驶舱数据
 			authRequired.GET("/personnel/status", handler.GetPersonnelStatus)   // 获取人员看板数据
+			// === 新增的驳回与重提路由 ===
+			authRequired.POST("/tasks/:id/reject", handler.RejectTask)
+			authRequired.POST("/tasks/:id/resubmit", handler.ResubmitTask)
+			// === 新增的任务转交相关路由 ===
+			authRequired.POST("/tasks/:id/transfer", handler.InitiateTransfer)
+			authRequired.POST("/transfers/:transfer_id/accept", handler.AcceptTransfer)
+			authRequired.POST("/transfers/:transfer_id/reject", handler.RejectTransfer)
+
+			// === 新增的子任务路由 ===
+			authRequired.POST("/tasks/:id/subtasks", handler.CreateSubtask)
 		}
 
 		// 5.3: 定义管理员路由组 (Admin Routes)
@@ -104,6 +115,9 @@ func main() {
 			// 所有只有"系统管理员"才能访问的接口都定义在这里
 			adminRoutes.GET("/task-types", handler.ListTaskTypes)   // 获取任务类型列表
 			adminRoutes.POST("/task-types", handler.CreateTaskType) // 创建新的任务类型
+			// --- 请确保这里添加了创建用户的路由 ---
+			// 它使用我们之前的 Register 函数，但现在受到了管理员权限的保护
+			adminRoutes.POST("/users", handler.Register)
 		}
 	}
 
@@ -112,6 +126,13 @@ func main() {
 	serverAddr := ":" + cfg.Server.Port
 	// 打印一条日志，方便我们知道服务在哪个端口启动
 	log.Printf("Server is starting on http://localhost%s", serverAddr)
+	// --- 新增：打印所有已注册的路由，用于最终诊断 ---
+	/*log.Println("--- Registered Routes ---")
+	for _, route := range r.Routes() {
+		log.Printf("Method: %-6s | Path: %s", route.Method, route.Path)
+	}
+	log.Println("-----------------------")*/
+	// ------------------------------------------------
 	// r.Run() 会启动服务并开始监听HTTP请求，它是一个阻塞操作
 	if err := r.Run(serverAddr); err != nil {
 		// 如果服务启动失败，打印致命错误并退出

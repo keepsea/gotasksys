@@ -29,15 +29,19 @@ func CreateTaskService(input model.Task) (model.Task, error) {
 	return input, nil
 }
 
-// ListTasksService 封装了获取任务列表的业务逻辑
-func ListTasksService() ([]model.Task, error) {
-	// 目前没有复杂逻辑，直接调用仓储层
-	// 未来可以在这里加入权限校验、筛选等逻辑
-	tasks, err := repository.ListTasks()
-	if err != nil {
-		return nil, err
+// ListTasksService 根据用户角色和ID，获取其能看到的任务列表
+func ListTasksService(userRole string, userID uuid.UUID) ([]model.Task, error) {
+	switch userRole {
+	case "system_admin", "manager":
+		return repository.ListAllTasks()
+	case "executor":
+		return repository.ListTasksForExecutor(userID)
+	case "creator":
+		return repository.ListTasksForCreator(userID)
+	default:
+		// 如果遇到未知的角色，返回空列表和错误
+		return nil, errors.New("invalid user role for listing tasks")
 	}
-	return tasks, nil
 }
 
 // GetTaskByIDService 封装了根据ID获取任务的业务逻辑
@@ -174,4 +178,80 @@ func EvaluateTaskService(taskID uint, evaluationData datatypes.JSON) error {
 
 	// 3. 更新数据库
 	return repository.UpdateTaskFields(taskID, updates)
+}
+
+// RejectTaskService 封装了驳回任务的业务逻辑
+func RejectTaskService(taskID uint, reason string, reviewerID uuid.UUID) error {
+	task, err := repository.FindTaskByID(taskID)
+	if err != nil {
+		return errors.New("task not found")
+	}
+	if task.Status != "pending_review" {
+		return errors.New("task is not in pending_review status")
+	}
+
+	updates := map[string]interface{}{
+		"status":           "rejected",
+		"rejection_reason": reason,
+		"reviewer_id":      reviewerID, // 记录是谁驳回的
+	}
+	return repository.UpdateTaskFields(taskID, updates)
+}
+
+// ResubmitTaskService 封装了重新提交任务的业务逻辑
+func ResubmitTaskService(taskID uint, creatorID uuid.UUID) error {
+	task, err := repository.FindTaskByID(taskID)
+	if err != nil {
+		return errors.New("task not found")
+	}
+	// 权限校验：只有创建者自己才能重新提交
+	if task.CreatorID != creatorID {
+		return errors.New("permission denied: only the creator can resubmit the task")
+	}
+	if task.Status != "rejected" {
+		return errors.New("task is not in rejected status")
+	}
+
+	updates := map[string]interface{}{
+		"status": "pending_review",
+	}
+	return repository.UpdateTaskFields(taskID, updates)
+}
+
+// CreateSubtaskService 封装了创建子任务的业务逻辑
+func CreateSubtaskService(parentTaskID uint, creatorID uuid.UUID, subtaskInput model.Task) (model.Task, error) {
+	// 1. 查找父任务，并进行权限和状态校验
+	parentTask, err := repository.FindTaskByID(parentTaskID)
+	if err != nil {
+		return model.Task{}, errors.New("parent task not found")
+	}
+	// 只有进行中的任务才能创建子任务
+	if parentTask.Status != "in_progress" {
+		return model.Task{}, errors.New("only in-progress tasks can have subtasks")
+	}
+	// 只有主任务的负责人才能创建子任务
+	if parentTask.AssigneeID == nil || *parentTask.AssigneeID != creatorID {
+		return model.Task{}, errors.New("permission denied: only the assignee of the main task can create subtasks")
+	}
+
+	// 2. 准备子任务数据
+	subtask := model.Task{
+		Title:          subtaskInput.Title,
+		Description:    subtaskInput.Description,
+		Priority:       subtaskInput.Priority,
+		Effort:         subtaskInput.Effort,
+		OriginalEffort: subtaskInput.Effort,
+		TaskTypeID:     parentTask.TaskTypeID, // 子任务默认继承父任务的类型
+		CreatorID:      creatorID,             // 创建者是当前操作用户
+		ParentTaskID:   &parentTask.ID,        // 关联父任务
+		Status:         "in_pool",             // 子任务直接进入任务池
+	}
+
+	// 3. 调用仓储层创建任务
+	err = repository.CreateTask(&subtask)
+	if err != nil {
+		return model.Task{}, err
+	}
+
+	return subtask, nil
 }
