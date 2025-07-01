@@ -5,11 +5,13 @@ import (
 	"gotasksys/internal/model"
 	"gotasksys/internal/service"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// PeriodicTaskInput (最终版)
 type PeriodicTaskInput struct {
 	Title             string     `json:"title" binding:"required"`
 	Description       string     `json:"description"`
@@ -18,6 +20,8 @@ type PeriodicTaskInput struct {
 	DefaultEffort     int        `json:"default_effort" binding:"required"`
 	DefaultPriority   string     `json:"default_priority" binding:"required"`
 	DefaultTaskTypeID *uuid.UUID `json:"default_task_type_id"`
+	StartDate         *time.Time `json:"start_date"` // 新增
+	EndDate           *time.Time `json:"end_date"`   // 新增
 }
 
 func ListPeriodicTasks(c *gin.Context) {
@@ -29,6 +33,7 @@ func ListPeriodicTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, tasks)
 }
 
+// CreatePeriodicTask (最终版)
 func CreatePeriodicTask(c *gin.Context) {
 	var input PeriodicTaskInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -41,6 +46,8 @@ func CreatePeriodicTask(c *gin.Context) {
 		Title: input.Title, Description: input.Description, CronExpression: input.CronExpression,
 		DefaultAssigneeID: input.DefaultAssigneeID, DefaultEffort: input.DefaultEffort,
 		DefaultPriority: input.DefaultPriority, DefaultTaskTypeID: input.DefaultTaskTypeID,
+		StartDate: input.StartDate, // 传递新字段
+		EndDate:   input.EndDate,   // 传递新字段
 	}
 
 	createdTask, err := service.CreatePeriodicTaskService(pt, creatorID)
@@ -51,6 +58,7 @@ func CreatePeriodicTask(c *gin.Context) {
 	c.JSON(http.StatusCreated, createdTask)
 }
 
+// UpdatePeriodicTask (最终版)
 func UpdatePeriodicTask(c *gin.Context) {
 	id, _ := uuid.Parse(c.Param("id"))
 	var input PeriodicTaskInput
@@ -63,6 +71,8 @@ func UpdatePeriodicTask(c *gin.Context) {
 		Title: input.Title, Description: input.Description, CronExpression: input.CronExpression,
 		DefaultAssigneeID: input.DefaultAssigneeID, DefaultEffort: input.DefaultEffort,
 		DefaultPriority: input.DefaultPriority, DefaultTaskTypeID: input.DefaultTaskTypeID,
+		StartDate: input.StartDate, // 传递新字段
+		EndDate:   input.EndDate,   // 传递新字段
 	}
 
 	updatedTask, err := service.UpdatePeriodicTaskService(id, pt)

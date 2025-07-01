@@ -66,6 +66,21 @@ func RemoveJob(periodicTaskID string) {
 
 // createTaskFromRule 是实际执行创建任务的函数
 func createTaskFromRule(pt model.PeriodicTask) {
+	now := time.Now()
+
+	// --- 核心校验逻辑 ---
+	// 1. 如果设置了开始时间，且当前时间早于开始时间，则不执行
+	if pt.StartDate != nil && now.Before(*pt.StartDate) {
+		log.Printf("Skipping periodic task '%s': Not yet started.", pt.Title)
+		return
+	}
+	// 2. 如果设置了结束时间，且当前时间晚于结束时间，则不执行，并考虑禁用该任务
+	if pt.EndDate != nil && now.After(*pt.EndDate) {
+		log.Printf("Skipping and deactivating periodic task '%s': It has expired.", pt.Title)
+		// 自动禁用已过期的计划任务
+		TogglePeriodicTaskService(pt.ID, false)
+		return
+	}
 	// 为任务标题添加日期戳，方便识别
 	taskTitle := pt.Title + " - " + time.Now().Format("2006-01-02")
 

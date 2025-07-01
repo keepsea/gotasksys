@@ -18,6 +18,8 @@ type PeriodicTask struct {
 	DefaultTaskTypeID *uuid.UUID `json:"default_task_type_id"`
 	IsActive          bool       `gorm:"not null;default:true" json:"is_active"`
 	CreatedByID       uuid.UUID  `gorm:"not null" json:"created_by_id"`
+	StartDate         *time.Time `json:"start_date,omitempty"`
+	EndDate           *time.Time `json:"end_date,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
