@@ -1,0 +1,255 @@
+openapi: 3.0.0
+info:
+  title: "任务看板系统 API"
+  description: "为团队设计的、用于实现人力资源可视化、可度量、可调度管理的任务看板系统后端API。"
+  version: "1.0"
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 本地开发服务器
+
+# --------------------------------------------------
+# 定义可复用的组件，如安全方案和数据模型
+# --------------------------------------------------
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  
+  schemas:
+    # 基础用户模型
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 用户唯一ID
+        username:
+          type: string
+          description: 用户名
+        real_name:
+          type: string
+          description: 真实姓名
+        role:
+          type: string
+          description: 用户角色
+          enum: ["system_admin", "manager", "executor", "creator"]
+    # 创建用户时的输入模型
+    UserInput:
+      type: object
+      required:
+        - username
+        - password
+        - real_name
+        - role
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        real_name:
+          type: string
+        role:
+          type: string
+          enum: ["system_admin", "manager", "executor", "creator"]
+
+# --------------------------------------------------
+# 全局安全定义：大部分接口都需要JWT认证
+# --------------------------------------------------
+security:
+  - BearerAuth: []
+
+# --------------------------------------------------
+# API路径定义
+# --------------------------------------------------
+paths:
+
+  # 模块一：认证
+  /login:
+    post:
+      summary: 用户登录
+      description: 使用用户名和密码换取用于后续请求的JWT。
+      tags: ["模块一：认证 (Authentication)"]
+      security: [] # 此接口为公开接口，无需认证
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ "username", "password" ]
+              properties:
+                username:
+                  type: string
+                  example: "manager_final"
+                password:
+                  type: string
+                  format: password
+                  example: "Password123!@#"
+      responses:
+        '200':
+          description: 登录成功，返回令牌和用户信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  user_id:
+                    type: string
+                    format: uuid
+                  role:
+                    type: string
+        '401':
+          description: 凭据无效
+        '404':
+          description: 用户未找到
+
+  # 模块二：用户与管理员
+  /profile:
+    get:
+      summary: 获取当前用户信息
+      description: 获取当前已登录用户的个人详细信息。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      responses:
+        '200':
+          description: 成功获取用户信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: 未授权或Token无效
+
+  /admin/users:
+    get:
+      summary: "(Admin) 获取所有用户列表"
+      description: 只有 system_admin 可以获取系统内所有用户的列表。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      responses:
+        '200':
+          description: 成功返回用户列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '403':
+          description: 权限不足
+    post:
+      summary: "(Admin) 创建新用户"
+      description: 只有 system_admin 可以创建新用户。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+      responses:
+        '201':
+          description: 用户创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: 
+                    type: string
+                    example: "User registered successfully"
+                  user_id:
+                    type: string
+                    format: uuid
+        '400':
+          description: 请求参数错误（如角色无效）
+        '403':
+          description: 权限不足
+        '409':
+          description: 用户名已存在
+
+  /admin/users/{id}/update-role:
+    post:
+      summary: "(Admin) 修改用户角色"
+      description: 只有 system_admin 可以修改指定ID用户的角色。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["role"]
+              properties:
+                role:
+                  type: string
+                  enum: ["system_admin", "manager", "executor", "creator"]
+      responses:
+        '200':
+          description: 角色更新成功
+        '400':
+          description: 请求参数错误（如角色无效）
+        '403':
+          description: 权限不足
+
+  /admin/users/{id}/reset-password:
+    post:
+      summary: "(Admin) 重置用户密码"
+      description: 只有 system_admin 可以重置指定ID用户的密码。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["new_password"]
+              properties:
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 12
+      responses:
+        '200':
+          description: 密码重置成功
+        '400':
+          description: 新密码不符合复杂度要求
+        '403':
+          description: 权限不足
+
+  /admin/users/{id}/delete:
+    post:
+      summary: "(Admin) 删除用户"
+      description: 只有 system_admin 可以删除指定ID的用户。
+      tags: ["模块二：用户与管理员 (Users & Admin)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 用户删除成功
+        '403':
+          description: 权限不足

@@ -1,0 +1,273 @@
+# ... (paths部分接续上一段) ...
+
+  # 模块五：任务转交 (Task Transfer)
+  /tasks/{id}/transfer:
+    post:
+      summary: (Assignee) 发起任务转交
+      description: 任务的当前负责人发起一次转交请求，将任务流转至'pending_transfer'状态。
+      tags: ["模块五：任务转交 (Task Transfer)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateTransferInput'
+      responses:
+        '200':
+          description: 转交请求发起成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: 
+                    type: string
+                  transfer_id:
+                    type: string
+                    format: uuid
+        '403':
+          description: 权限不足（只有当前负责人可以发起）
+
+  /transfers/{transfer_id}/accept:
+    post:
+      summary: (新Assignee) 接受转交
+      description: 被指定的任务接收人，接受转交请求。
+      tags: ["模块五：任务转交 (Task Transfer)"]
+      parameters:
+        - name: transfer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 成功接受转交
+        '403':
+          description: 权限不足（只有被指定的接收人可以操作）
+        '409':
+          description: 状态冲突（转交请求不处于'pending'状态）
+
+  /transfers/{transfer_id}/reject:
+    post:
+      summary: (新Assignee) 拒绝转交
+      description: 被指定的任务接收人，拒绝转交请求。
+      tags: ["模块五：任务转交 (Task Transfer)"]
+      parameters:
+        - name: transfer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 成功拒绝转交
+        '403':
+          description: 权限不足
+        '409':
+          description: 状态冲突
+
+  # 模块六：数据看板 (Dashboards & Kanbans)
+  /dashboard/summary:
+    get:
+      summary: (Manager) 获取驾驶舱KPI数据
+      description: 获取用于首页驾驶舱展示的核心KPI统计数据。
+      tags: ["模块六：数据看板 (Dashboards & Kanbans)"]
+      responses:
+        '200':
+          description: 成功返回统计数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+        '403':
+          description: 权限不足
+  
+  /personnel/status:
+    get:
+      summary: (Manager) 获取人员看板数据
+      description: 获取所有团队成员的实时负载、进行中任务和历史绩效评分。
+      tags: ["模块六：数据看板 (Dashboards & Kanbans)"]
+      responses:
+        '200':
+          description: 成功返回人员看板数据
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonnelStatus'
+        '403':
+          description: 权限不足
+
+  # 模块七：系统配置管理
+  /task-types:
+    get:
+      summary: 获取启用的任务类型
+      description: 任何已登录用户，为创建任务时提供可选的任务类型列表。
+      tags: ["模块七：系统配置管理 (System Config)"]
+      responses:
+        '200':
+          description: 成功返回任务类型列表
+  
+  /admin/task-types:
+    get:
+      summary: "(Admin) 获取所有任务类型"
+      description: 管理员获取所有任务类型，包括已禁用的。
+      tags: ["模块七：系统配置管理 (System Config)"]
+      responses:
+        '200':
+          description: 成功返回所有任务类型列表
+    post:
+      summary: "(Admin) 创建新任务类型"
+      tags: ["模块七：系统配置管理 (System Config)"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: 创建成功
+  
+  /admin/task-types/{id}/update:
+    post:
+      summary: "(Admin) 修改任务类型"
+      description: "用于修改任务的类型包括状态"
+      tags: ["模块七：系统配置管理 (System Config)"]
+      parameters:
+        - $ref: '#/components/parameters/UUID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                is_enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: 更新成功
+
+  /admin/task-types/{id}/delete:
+    post:
+      summary: "(Admin) 删除任务类型"
+      description: "用于删除未被使用的任务类型"
+      tags: ["模块七：系统配置管理 (System Config)"]
+      parameters:
+        - $ref: '#/components/parameters/UUID'
+      responses:
+        '200':
+          description: 删除成功
+        '409':
+          description: 任务类型正在被使用，无法删除
+
+  /admin/configs:
+    post:
+      summary: "(Admin) 更新系统配置"
+      description: "用于更新人员看板状态灯阈值等。"
+      tags: ["模块七：系统配置管理 (System Config)"]
+      responses:
+        '200':
+          description: 配置更新成功
+
+  # 模块八：计划任务 (Periodic Tasks)
+  /periodic-tasks:
+    get:
+      summary: "(Manager) 获取计划任务列表"
+      description: "用于查看计划任务列表"
+      tags: ["模块八：计划任务 (Periodic Tasks)"]
+      responses:
+        '200':
+          description: 成功返回计划任务列表
+    post:
+      summary: "(Manager) 创建新的计划任务"
+      description: "用于创建新的计划任务"
+      tags: ["模块八：计划任务 (Periodic Tasks)"]
+      responses:
+        '201':
+          description: 创建成功
+
+  /periodic-tasks/{id}/update:
+    post:
+      summary: "(Manager) 修改计划任务"
+      description: "用于manager修改指定的计划任务"
+      tags: ["模块八：计划任务 (Periodic Tasks)"]
+      parameters:
+        - $ref: '#/components/parameters/UUID'
+      responses:
+        '200':
+          description: 修改成功
+
+  /periodic-tasks/{id}/delete:
+    post:
+      summary: "(Manager) 删除计划任务"
+      description: "用于manager删除指定的计划任务"
+      tags: ["模块八：计划任务 (Periodic Tasks)"]
+      parameters:
+        - $ref: '#/components/parameters/UUID'
+      responses:
+        '200':
+          description: 删除成功
+
+  /periodic-tasks/{id}/toggle:
+    post:
+      summary: "(Manager) 暂停或恢复计划任务"
+      description: "用于manager临时停止或将指定的计划任务恢复执行"
+      tags: ["模块八：计划任务 (Periodic Tasks)"]
+      parameters:
+        - $ref: '#/components/parameters/UUID'
+      responses:
+        '200':
+          description: 状态更新成功
+
+# --------------------------------------------------
+# 在 components.schemas 中补充本模块用到的所有数据模型
+# (此处仅为示例，完整的OAS文件会包含所有模型)
+# --------------------------------------------------
+# components:
+#   parameters:
+#     UUID:
+#       name: id
+#       in: path
+#       required: true
+#       schema:
+#         type: string
+#         format: uuid
+#   schemas:
+#     InitiateTransferInput:
+#       type: object
+#       properties:
+#         new_assignee_id:
+#           type: string
+#           format: uuid
+#         effort_spent:
+#           type: integer
+#     DashboardSummary:
+#       type: object
+#       properties:
+#         pending_review_count: 
+#           type: integer
+#         # ...
+#     PersonnelStatus:
+#       type: object
+#       properties:
+#         user_id:
+#           type: string
+#         # ...
+#         performance_metrics:
+#           type: object
+#           properties:
+#             composite_score:
+#               type: number
+#             # ...

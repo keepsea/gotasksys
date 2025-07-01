@@ -495,3 +495,42 @@ func CreateSubtask(c *gin.Context) {
 	// 7. 返回成功响应
 	c.JSON(http.StatusCreated, createdSubtask)
 }
+
+// AssignTaskInput 定义了指派任务时需要输入的参数
+type AssignTaskInput struct {
+	AssigneeID string `json:"assignee_id" binding:"required,uuid"`
+}
+
+// AssignTask 允许管理者将任务指派给执行人
+func AssignTask(c *gin.Context) {
+	// 权限校验
+	userRole, _ := c.Get("user_role")
+	if userRole != "manager" && userRole != "system_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can assign tasks."})
+		return
+	}
+
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	var input AssignTaskInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	assigneeID, _ := uuid.Parse(input.AssigneeID)
+	managerID, _ := uuid.Parse(c.GetString("user_id"))
+
+	err = service.AssignTaskService(uint(taskID), assigneeID, managerID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Task assigned successfully."})
+}

@@ -1,0 +1,176 @@
+# ... (paths部分接续上一段) ...
+
+  # 模块四：任务工作流 (Task Workflow)
+  /tasks/{id}/approve:
+    post:
+      summary: (Manager) 审批任务
+      description: 管理者审批一个'pending_review'状态的任务，为其设定工时、优先级和类型，使其进入任务池。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveTaskInput'
+      responses:
+        '200':
+          description: 任务批准成功
+        '400':
+          description: 请求参数错误（如工时小于等于0）
+        '403':
+          description: 权限不足
+        '404':
+          description: 任务未找到
+        '409':
+          description: 状态冲突（任务不处于'pending_review'状态）
+
+  /tasks/{id}/reject:
+    post:
+      summary: (Manager) 驳回任务
+      description: 管理者驳回一个'pending_review'状态的任务，并附上驳回理由。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["reason"]
+              properties:
+                reason:
+                  type: string
+                  description: "驳回任务的详细理由"
+      responses:
+        '200':
+          description: 任务驳回成功
+        '403':
+          description: 权限不足
+        '404':
+          description: 任务未找到
+
+  /tasks/{id}/resubmit:
+    post:
+      summary: (Creator) 重新提交任务
+      description: 任务创建者在修改了被驳回('rejected')的任务后，重新提交以供审核。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务重提成功
+        '403':
+          description: 权限不足（只有创建者本人可以重提）
+        '409':
+          description: 状态冲突（任务不处于'rejected'状态）
+
+  /tasks/{id}/claim:
+    post:
+      summary: (Executor) 领取任务
+      description: 任务执行者从任务池('in_pool')中领取一个任务，将其分配给自己。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务领取成功
+        '403':
+          description: 权限不足（只有Executor/Manager可以领取）
+        '409':
+          description: 状态冲突（任务不处于'in_pool'状态）
+
+  /tasks/{id}/assign:
+    post:
+      summary: (Manager) 指派任务
+      description: 管理者将任务池('in_pool')中的一个任务，直接指派给某位执行者。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["assignee_id"]
+              properties:
+                assignee_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: 任务指派成功
+        '403':
+          description: 权限不足
+
+  /tasks/{id}/complete:
+    post:
+      summary: (Assignee) 完成任务
+      description: 任务的当前负责人完成工作，将任务状态从'in_progress'变为'pending_evaluation'。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务提交成功
+        '403':
+          description: 权限不足（只有负责人本人可以提交）
+
+  /tasks/{id}/evaluate:
+    post:
+      summary: (Manager/主任务Assignee) 评价任务
+      description: 管理者评价主任务，或主任务负责人评价子任务，使其最终完成。
+      tags: ["模块四：任务工作流 (Task Workflow)"]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluateTaskInput'
+      responses:
+        '200':
+          description: 任务评价成功
+        '403':
+          description: 权限不足
+
+# --------------------------------------------------
+# 在 components.schemas 中补充本模块用到的数据模型
+# --------------------------------------------------
+# components:
+#   parameters:
+#     TaskId: # 可复用的ID参数
+#       name: id
+#       in: path
+#       required: true
+#       schema:
+#         type: integer
+#
+#   schemas:
+#     ApproveTaskInput:
+#       type: object
+#       required: [ "effort", "priority", "task_type_id" ]
+#       properties:
+#         effort:
+#           type: integer
+#           description: "管理者设定的工时"
+#         priority:
+#           type: string
+#           description: "管理者设定的优先级"
+#         task_type_id:
+#           type: string
+#           format: uuid
+#           description: "管理者确认的任务类型ID"
+#     EvaluateTaskInput:
+#       type: object
+#       required: ["evaluation"]
+#       properties:
+#         evaluation:
+#           type: object
+#           description: "包含多维度评分的JSON对象"
+#           example: {"timeliness": 5, "quality": 4.5, "collaboration": 5, "complexity": 3}
+#

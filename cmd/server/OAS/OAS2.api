@@ -1,0 +1,171 @@
+# ... (paths部分接续上一段) ...
+
+  # 模块三：核心任务操作 (Task CRUD)
+  /tasks:
+    get:
+      summary: 获取任务列表
+      description: 获取任务列表。返回的数据会根据调用者的角色（manager, executor, creator）进行动态过滤。
+      tags: ["模块三：任务 (Tasks)"]
+      responses:
+        '200':
+          description: 成功返回任务列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task' # Task模型将包含预加载的Creator和Assignee信息
+        '401':
+          description: 未授权
+    post:
+      summary: 创建新任务
+      description: 任何已登录用户都可以创建一个新任务，任务初始状态为'pending_review'。
+      tags: ["模块三：任务 (Tasks)"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskInput'
+      responses:
+        '201':
+          description: 任务创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: 请求参数错误（如截止日期格式不正确）
+        '401':
+          description: 未授权
+
+  /tasks/{id}:
+    get:
+      summary: 获取单个任务详情
+      description: 获取指定ID的单个任务的详细信息。
+      tags: ["模块三：任务 (Tasks)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功返回任务详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: 未授权
+        '404':
+          description: 任务未找到
+
+  /tasks/{id}/update:
+    post:
+      summary: 更新任务信息
+      description: 更新指定ID的任务信息。权限逻辑复杂：Manager可随时更新；Creator仅可在任务被驳回时更新。
+      tags: ["模块三：任务 (Tasks)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskInput'
+      responses:
+        '200':
+          description: 任务更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '403':
+          description: 权限不足
+        '404':
+          description: 任务未找到
+
+  /tasks/{id}/delete:
+    post:
+      summary: 删除任务
+      description: 删除指定ID的任务。
+      tags: ["模块三：任务 (Tasks)"]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 任务删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Task deleted successfully"
+        '403':
+          description: 权限不足 (仅Manager/Admin可删除)
+        '404':
+          description: 任务未找到
+
+# --------------------------------------------------
+# 在 components.schemas 中补充本模块用到的数据模型
+# --------------------------------------------------
+# components:
+#   schemas:
+#     CreateTaskInput:
+#       type: object
+#       required: [ "title", "due_date" ]
+#       properties:
+#         title:
+#           type: string
+#         description:
+#           type: string
+#         due_date:
+#           type: string
+#           format: date-time
+#     UpdateTaskInput:
+#       type: object
+#       properties:
+#         title:
+#           type: string
+#         description:
+#           type: string
+#         priority:
+#           type: string
+#         effort:
+#           type: integer
+#     Task:
+#       type: object
+#       properties:
+#         id:
+#           type: integer
+#         title:
+#           type: string
+#         description:
+#           type: string
+#         status:
+#           type: string
+#         priority:
+#           type: string
+#         effort:
+#           type: integer
+#         original_effort:
+#           type: integer
+#         rejection_reason:
+#           type: string
+#         creator:
+#           $ref: '#/components/schemas/User'
+#         assignee:
+#           $ref: '#/components/schemas/User'
+#         # ...以及所有其他Task模型字段          

@@ -14,128 +14,105 @@ import (
 	"gotasksys/internal/api/middleware" // 导入我们所有的中间件 (Middleware)
 	"gotasksys/internal/config"         // 导入我们的配置加载和数据库初始化模块
 
-	// 第三方开源库
 	"github.com/gin-contrib/cors" // 导入CORS中间件库
 	"github.com/gin-gonic/gin"    // 导入Gin框架库
 )
 
 // main 函数是整个程序的起点
+
 func main() {
-	//log.Println("--- SERVER RESTART --- VERSION 1.2.6 --- (Final Check)")
-	// --- 步骤1: 加载应用配置 ---
-	// 从 config.yaml 文件中读取数据库地址、服务端口等所有配置信息
+	// --- 加载配置、初始化数据库、应用CORS中间件 (这部分不变) ---
 	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {
-		// 如果加载配置失败，程序无法继续，打印致命错误并退出
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	// --- 步骤2: 初始化数据库连接 ---
-	// 使用加载到的配置信息，建立与PostgreSQL数据库的连接池
 	config.InitDB(cfg)
-
-	// --- 步骤3: 初始化Web框架引擎 ---
-	// gin.Default() 会创建一个带有基础中间件（如日志、错误恢复）的Gin引擎
 	r := gin.Default()
-
-	// --- 步骤4: 应用全局中间件 ---
-	// r.Use(...) 用于向整个应用注册一个或多个中间件，所有请求都会先经过它们
-	// cors.Default() 创建一个默认的CORS（跨域资源共享）中间件。
-	// 它允许所有源(Origin)的跨域请求，这在前后端分离的本地开发中至关重要。
-	// === 用下面这段详细配置，替换掉 r.Use(cors.Default()) ===
 	r.Use(cors.New(cors.Config{
-		// 允许跨域的源，可以用*通配符，但更安全的方式是明确指定
 		AllowOrigins: []string{"http://localhost:5173"},
-		// 允许的请求方法
-		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		// **关键：明确允许 Authorization 这个请求头**
+		AllowMethods: []string{"GET", "POST"}, // <-- 修改：只允许GET和POST
 		AllowHeaders: []string{"Origin", "Content-Type", "Authorization"},
-		// 允许浏览器缓存预检请求结果的时间
-		MaxAge: 12 * time.Hour,
+		MaxAge:       12 * time.Hour,
 	}))
-	// ========================================================
 
-	// --- 步骤5: 定义API路由 ---
-	// 创建一个API分组，所有接口的URL都会带上 /api/v1 这个前缀，便于版本管理
+	// --- 核心：定义所有API路由 ---
 	v1 := r.Group("/api/v1")
 	{
-		// 5.1: 定义公开路由 (Public Routes)
-		// 这些接口不需要任何认证，任何人都可以访问
-		v1.POST("/register", handler.Register) // 管理员创建用户接口 (之前是公开注册)
-		v1.POST("/login", handler.Login)       // 用户登录接口
+		// 1. 公开路由组
+		v1.POST("/login", handler.Login)
 
-		// 5.2: 定义普通认证路由组 (Authenticated Routes)
-		// 创建一个新的子分组，所有在这个组里的路由，都需要先通过它所应用的中间件
+		// 2. 普通认证路由组
 		authRequired := v1.Group("/")
-		// .Use() 会将中间件应用到这个组内的所有路由上
-		// AuthMiddleware 会检查请求头中是否带有合法有效的JWT
 		authRequired.Use(middleware.AuthMiddleware())
 		{
-			// === 新增：为普通用户提供获取任务类型的接口 ===
-			authRequired.GET("/task-types", handler.ListTaskTypes) // 获取任务类型列表
-			// 所有需要"登录"身份才能访问的接口，都定义在这里
-			authRequired.GET("/profile", handler.GetProfile) // 获取个人信息
+			// 用户与杂项
+			authRequired.GET("/profile", handler.GetProfile)
+			authRequired.GET("/task-types", handler.ListTaskTypes)
+			authRequired.GET("/dashboard/summary", handler.GetDashboardSummary)
+			authRequired.GET("/personnel/status", handler.GetPersonnelStatus)
 
-			// 任务相关的CRUD接口
-			authRequired.POST("/tasks", handler.CreateTask)       // 创建任务
-			authRequired.GET("/tasks", handler.ListTasks)         // 获取任务列表
-			authRequired.GET("/tasks/:id", handler.GetTask)       // 获取单个任务详情
-			authRequired.PATCH("/tasks/:id", handler.UpdateTask)  // 更新任务
-			authRequired.DELETE("/tasks/:id", handler.DeleteTask) // 删除任务
+			// 任务CRUD
+			authRequired.POST("/tasks", handler.CreateTask)
+			authRequired.GET("/tasks", handler.ListTasks)
+			authRequired.GET("/tasks/:id", handler.GetTask)
+			authRequired.POST("/tasks/:id/update", handler.UpdateTask)
+			authRequired.POST("/tasks/:id/delete", handler.DeleteTask)
 
-			// 任务工作流相关的接口
-			authRequired.POST("/tasks/:id/approve", handler.ApproveTask)   // 审批任务
-			authRequired.POST("/tasks/:id/claim", handler.ClaimTask)       // 领取任务
-			authRequired.POST("/tasks/:id/complete", handler.CompleteTask) // 完成任务
-			authRequired.POST("/tasks/:id/evaluate", handler.EvaluateTask) // 评价任务
-
-			// 看板和驾驶舱数据接口
-			authRequired.GET("/dashboard/summary", handler.GetDashboardSummary) // 获取驾驶舱数据
-			authRequired.GET("/personnel/status", handler.GetPersonnelStatus)   // 获取人员看板数据
-			// === 新增的驳回与重提路由 ===
+			// 任务工作流
+			authRequired.POST("/tasks/:id/approve", handler.ApproveTask)
 			authRequired.POST("/tasks/:id/reject", handler.RejectTask)
 			authRequired.POST("/tasks/:id/resubmit", handler.ResubmitTask)
-			// === 新增的任务转交相关路由 ===
+			authRequired.POST("/tasks/:id/claim", handler.ClaimTask)
+			authRequired.POST("/tasks/:id/complete", handler.CompleteTask)
+			authRequired.POST("/tasks/:id/evaluate", handler.EvaluateTask)
+
+			// 任务转交
 			authRequired.POST("/tasks/:id/transfer", handler.InitiateTransfer)
 			authRequired.POST("/transfers/:transfer_id/accept", handler.AcceptTransfer)
 			authRequired.POST("/transfers/:transfer_id/reject", handler.RejectTransfer)
 
-			// === 新增的子任务路由 ===
+			// 子任务
 			authRequired.POST("/tasks/:id/subtasks", handler.CreateSubtask)
+
+			// 管理员指派任务
+			authRequired.POST("/tasks/:id/assign", handler.AssignTask)
+			// === 新增：计划任务管理路由 (仅Manager可访问) ===
+			periodicRoutes := authRequired.Group("/periodic-tasks")
+			// 这里加一个Manager的中间件
+			periodicRoutes.Use(middleware.ManagerAuthMiddleware())
+			{
+				periodicRoutes.GET("", handler.ListPeriodicTasks)
+				periodicRoutes.POST("", handler.CreatePeriodicTask)
+				periodicRoutes.POST("/:id/update", handler.UpdatePeriodicTask)
+				periodicRoutes.POST("/:id/delete", handler.DeletePeriodicTask)
+				periodicRoutes.POST("/:id/toggle", handler.TogglePeriodicTask)
+			}
 		}
 
-		// 5.3: 定义管理员路由组 (Admin Routes)
-		// 创建一个专门给管理员使用的子分组，路径以 /admin 开头
+		// 3. 管理员路由组
 		adminRoutes := v1.Group("/admin")
-		// **注意: 这里应用了两个中间件，它们会按顺序执行**
-		// 1. AuthMiddleware 先确保用户已登录
-		// 2. AdminAuthMiddleware 再确保该用户角色是 system_admin
 		adminRoutes.Use(middleware.AuthMiddleware(), middleware.AdminAuthMiddleware())
 		{
-			// 所有只有"系统管理员"才能访问的接口都定义在这里
-			adminRoutes.GET("/task-types", handler.ListTaskTypes)   // 获取任务类型列表
-			adminRoutes.POST("/task-types", handler.CreateTaskType) // 创建新的任务类型
-			// --- 请确保这里添加了创建用户的路由 ---
-			// 它使用我们之前的 Register 函数，但现在受到了管理员权限的保护
+			// 用户管理
+			adminRoutes.GET("/users", handler.ListUsers)
 			adminRoutes.POST("/users", handler.Register)
+			adminRoutes.POST("/users/:id/update-role", handler.UpdateUserRole)   // <-- 修改: PUT -> POST
+			adminRoutes.POST("/users/:id/reset-password", handler.ResetPassword) // <-- 修改: PUT -> POST
+			adminRoutes.POST("/users/:id/delete", handler.DeleteUser)            // <-- 修改: DELETE -> POST
+
+			// 任务类型管理
+			adminRoutes.GET("/task-types", handler.ListTaskTypes)
+			adminRoutes.POST("/task-types", handler.CreateTaskType)
+			// 待完成的路由
+			// adminRoutes.POST("/task-types/:id/update", handler.UpdateTaskType)
+			// adminRoutes.POST("/task-types/:id/delete", handler.DeleteTaskType)
 		}
 	}
 
-	// --- 步骤6: 启动HTTP服务 ---
-	// 拼接服务地址和端口号
+	// --- 启动服务 ---
 	serverAddr := ":" + cfg.Server.Port
-	// 打印一条日志，方便我们知道服务在哪个端口启动
 	log.Printf("Server is starting on http://localhost%s", serverAddr)
-	// --- 新增：打印所有已注册的路由，用于最终诊断 ---
-	/*log.Println("--- Registered Routes ---")
-	for _, route := range r.Routes() {
-		log.Printf("Method: %-6s | Path: %s", route.Method, route.Path)
-	}
-	log.Println("-----------------------")*/
-	// ------------------------------------------------
-	// r.Run() 会启动服务并开始监听HTTP请求，它是一个阻塞操作
 	if err := r.Run(serverAddr); err != nil {
-		// 如果服务启动失败，打印致命错误并退出
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

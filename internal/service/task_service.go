@@ -338,3 +338,26 @@ func CreateSubtaskService(parentTaskID uint, creatorID uuid.UUID, subtaskInput m
 
 	return subtask, nil
 }
+
+// AssignTaskService 封装了指派任务的业务逻辑
+func AssignTaskService(taskID uint, assigneeID uuid.UUID, managerID uuid.UUID) error {
+	// 1. 查找任务并校验状态
+	task, err := repository.FindTaskByID(taskID)
+	if err != nil {
+		return errors.New("task not found")
+	}
+	if task.Status != "in_pool" {
+		return errors.New("task is not in the task pool to be assigned")
+	}
+
+	// 2. 准备更新
+	updates := map[string]interface{}{
+		"status":      "in_progress", // 任务被指派后，直接进入进行中状态
+		"assignee_id": assigneeID,
+		"claimed_at":  time.Now(), // 视同被领取
+		"reviewer_id": managerID,  // 记录下是哪位经理指派的
+	}
+
+	// 3. 更新数据库
+	return repository.UpdateTaskFields(taskID, updates)
+}
