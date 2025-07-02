@@ -88,19 +88,42 @@ func UpdateTaskService(taskID uint, currentUser model.User, updateData model.Tas
 	return task, nil
 }
 
-// DeleteTaskService 封装了删除任务的业务逻辑
-func DeleteTaskService(id uint) error {
-	// 1. 先确保任务存在
-	_, err := repository.FindTaskByID(id)
+// DeleteTaskService 封装了删除任务的业务逻辑 (最终权限版)
+func DeleteTaskService(taskID uint, currentUser model.User) error {
+	// 1. 查找待删除的任务
+	taskToDelete, err := repository.FindTaskByID(taskID)
 	if err != nil {
-		return err // 任务不存在
+		return errors.New("task not found")
 	}
 
-	// 2. 调用仓储层删除任务
-	return repository.DeleteTask(id)
+	// 2. --- 核心：最终的删除权限校验逻辑 ---
+	hasPermission := false
+	// 规则a: Manager或Admin总是有权限
+	if currentUser.Role == "manager" || currentUser.Role == "system_admin" {
+		hasPermission = true
+	}
+	// 规则b: 如果是子任务，检查当前用户是否是其父任务的负责人
+	if !hasPermission && taskToDelete.ParentTaskID != nil {
+		parentTask, err := repository.FindTaskByID(*taskToDelete.ParentTaskID)
+		if err == nil && parentTask.AssigneeID != nil && *parentTask.AssigneeID == currentUser.ID {
+			hasPermission = true
+		}
+	}
+	// 规则c: 任务的创建者，在任务被驳回时，也可以删除它
+	if !hasPermission && taskToDelete.Status == "rejected" && taskToDelete.CreatorID == currentUser.ID {
+		hasPermission = true
+	}
+
+	if !hasPermission {
+		return errors.New("permission denied: you are not authorized to delete this task")
+	}
+	// ------------------------------------------
+
+	// 3. 调用仓储层删除任务
+	return repository.DeleteTask(taskID)
 }
 
-func ApproveTaskService(taskID uint, reviewerID uuid.UUID, input model.Task) error {
+func ApproveTaskService(taskID uint, reviewerID uuid.UUID, effort int, priority string, taskTypeID uuid.UUID, difficultyRating map[string]float64) error {
 	task, err := repository.FindTaskByID(taskID)
 	if err != nil {
 		return errors.New("task not found")
@@ -108,18 +131,39 @@ func ApproveTaskService(taskID uint, reviewerID uuid.UUID, input model.Task) err
 	if task.Status != "pending_review" {
 		return errors.New("task is not in pending_review status")
 	}
-	if input.Effort <= 0 {
+	if effort <= 0 {
 		return errors.New("effort must be greater than zero")
 	}
 
+	// --- 新增：处理和计算技术难度分 ---
+	var finalRatingJSON datatypes.JSON
+	if difficultyRating != nil {
+		// 我们可以在这里增加校验，确保4个维度都存在
+		novelty := difficultyRating["novelty"]
+		complexity := difficultyRating["logic_complexity"]
+		impact := difficultyRating["impact_scope"]
+		collaboration := difficultyRating["collaboration_cost"]
+
+		compositeScore := (novelty + complexity + impact + collaboration) / 4.0
+		difficultyRating["composite_difficulty_score"] = compositeScore
+
+		ratingBytes, err := json.Marshal(difficultyRating)
+		if err != nil {
+			return errors.New("failed to process difficulty rating")
+		}
+		finalRatingJSON = ratingBytes
+	}
+	// ------------------------------------
+
 	updates := map[string]interface{}{
-		"status":          "in_pool",
-		"reviewer_id":     reviewerID,
-		"approved_at":     time.Now(),
-		"effort":          input.Effort,     // Manager设定的工时
-		"original_effort": input.Effort,     // Manager设定的原始工时
-		"priority":        input.Priority,   // Manager设定的优先级
-		"task_type_id":    input.TaskTypeID, // Manager最终确认的任务类型
+		"status":            "in_pool",
+		"reviewer_id":       reviewerID,
+		"approved_at":       time.Now(),
+		"effort":            effort,
+		"original_effort":   effort,
+		"priority":          priority,
+		"task_type_id":      &taskTypeID,     // 确保传递指针
+		"difficulty_rating": finalRatingJSON, // 保存包含综合分的完整JSON
 	}
 	return repository.UpdateTaskFields(taskID, updates)
 }

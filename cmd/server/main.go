@@ -78,6 +78,8 @@ func main() {
 
 			// 管理员指派任务
 			authRequired.POST("/tasks/:id/assign", handler.AssignTask)
+			// 用户获取可用头像列表的路由
+			authRequired.GET("/system-avatars", handler.ListAvailableAvatars)
 
 			// 计划任务管理路由 (仅Manager可访问)
 			periodicRoutes := authRequired.Group("/periodic-tasks")
@@ -108,6 +110,14 @@ func main() {
 			adminRoutes.POST("/task-types", handler.CreateTaskType)
 			adminRoutes.POST("/task-types/:id/update", handler.UpdateTaskType)
 			adminRoutes.POST("/task-types/:id/delete", handler.DeleteTaskType)
+			// 管理员头像库管理路由组
+			avatarRoutes := adminRoutes.Group("/system-avatars")
+			{
+				avatarRoutes.GET("", handler.ListAllSystemAvatars)           // 获取所有头像（包括禁用的）
+				avatarRoutes.POST("", handler.CreateSystemAvatar)            // 新增一个头像
+				avatarRoutes.POST("/:id/update", handler.UpdateSystemAvatar) // 修改一个头像
+				avatarRoutes.POST("/:id/delete", handler.DeleteSystemAvatar) // 删除一个头像
+			}
 		}
 	}
 

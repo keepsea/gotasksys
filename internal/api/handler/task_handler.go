@@ -22,13 +22,6 @@ type CreateTaskInput struct {
 	DueDate     *time.Time `json:"due_date" binding:"required"`
 }
 
-// ApproveTaskInput (最终版): 包含Manager审批时需要设定的所有信息
-type ApproveTaskInput struct {
-	Effort     int    `json:"effort" binding:"required,gt=0"`
-	Priority   string `json:"priority" binding:"required"`
-	TaskTypeID string `json:"task_type_id" binding:"required,uuid"`
-}
-
 // CreateTask 现在只负责参数解析和调用service
 // CreateTask 创建任务时不再处理工时
 func CreateTask(c *gin.Context) {
@@ -148,27 +141,32 @@ func UpdateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, updatedTask)
 }
 
-// DeleteTask 删除一个任务
+// DeleteTask 删除一个任务 (最终权限版)
 func DeleteTask(c *gin.Context) {
-	// === 权限校验 ===
-	userRole, _ := c.Get("user_role")
-	if userRole != "manager" && userRole != "system_admin" { // 允许管理员和系统管理员删除
-		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied. Only managers can delete tasks."})
-		return
-	}
-	// =================
-
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
+	// 从URL解析任务ID
+	taskID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
 		return
 	}
 
-	err = service.DeleteTaskService(uint(id))
+	// 获取当前操作用户
+	currentUserID, _ := uuid.Parse(c.GetString("user_id"))
+	currentUser, err := repository.FindUserByID(currentUserID)
 	if err != nil {
-		if err.Error() == "record not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve user info"})
+		return
+	}
+
+	// 调用Service层处理业务逻辑
+	err = service.DeleteTaskService(uint(taskID), currentUser)
+	if err != nil {
+		if err.Error() == "permission denied: you are not authorized to delete this task" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "task not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete task"})
@@ -178,9 +176,16 @@ func DeleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
 
+type ApproveTaskInput struct {
+	Effort           int                `json:"effort" binding:"required,gt=0"`
+	Priority         string             `json:"priority" binding:"required"`
+	TaskTypeID       string             `json:"task_type_id" binding:"required,uuid"`
+	DifficultyRating map[string]float64 `json:"difficulty_rating" binding:"required"` // 新增
+}
+
 // ApproveTask 批准任务时接收并设定工时 (最终版)
 func ApproveTask(c *gin.Context) {
-	// ... (函数前半部分的代码保持不变) ...
+	// ... (权限校验和参数解析部分不变) ...
 	userRole, _ := c.Get("user_role")
 	if userRole != "manager" && userRole != "system_admin" { /* ... */
 	}
@@ -194,15 +199,7 @@ func ApproveTask(c *gin.Context) {
 	}
 	taskTypeID, _ := uuid.Parse(input.TaskTypeID)
 
-	// --- 这里的组装逻辑有微调 ---
-	updateData := model.Task{
-		Effort:     input.Effort,
-		Priority:   input.Priority,
-		TaskTypeID: &taskTypeID, // <-- 修改在这里：因为模型是*uuid.UUID，所以这里要传递指针
-	}
-	// -------------------------
-
-	err := service.ApproveTaskService(uint(taskID), reviewerID, updateData)
+	err := service.ApproveTaskService(uint(taskID), reviewerID, input.Effort, input.Priority, taskTypeID, input.DifficultyRating)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
