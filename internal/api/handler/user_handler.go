@@ -4,7 +4,6 @@ package handler
 
 import (
 	"gotasksys/internal/config"
-	"gotasksys/internal/model"
 	"gotasksys/internal/repository"
 	"gotasksys/internal/service" // 引入service层
 	"net/http"
@@ -15,63 +14,12 @@ import (
 
 // --- 用于请求参数绑定的结构体 ---
 
-type RegisterInput struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-	RealName string `json:"real_name" binding:"required"`
-	Role     string `json:"role" binding:"required"`
-}
-
 type LoginInput struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
 // --- API处理器函数 ---
-
-// Register 由管理员创建一个新用户
-func Register(c *gin.Context) {
-	var input RegisterInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 角色有效性验证 (纠偏计划任务1)
-	allowedRoles := map[string]bool{
-		"system_admin": true,
-		"manager":      true,
-		"executor":     true,
-		"creator":      true,
-	}
-	if !allowedRoles[input.Role] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role specified: " + input.Role})
-		return
-	}
-
-	// 将输入参数组装成模型对象
-	// 注意：我们将原始密码传递给Service层，由Service层负责调用哈希工具
-	user := model.User{
-		Username:     input.Username,
-		PasswordHash: input.Password, // 临时存储原始密码
-		RealName:     input.RealName,
-		Role:         input.Role,
-	}
-
-	// 将业务逻辑委托给Service层
-	userID, err := service.RegisterUser(user)
-	if err != nil {
-		// 根据Service层返回的错误类型，给出不同的HTTP响应
-		if err.Error() == "username already exists" {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // 其他业务错误，如密码太短
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"message": "User registered successfully", "user_id": userID})
-}
 
 // Login 处理用户登录请求
 func Login(c *gin.Context) {

@@ -9,19 +9,28 @@ import (
 	"github.com/google/uuid"
 )
 
-// --- 已有函数 ---
-func FindUserByUsername(username string) (model.User, error) {
-	var user model.User
-	result := config.DB.Where("username = ?", username).First(&user)
-	return user, result.Error
-}
-
+// 核心查询
 func FindUserByID(id uuid.UUID) (model.User, error) {
 	var user model.User
 	result := config.DB.First(&user, "id = ?", id)
 	return user, result.Error
 }
 
+// 根据用户名查找用户
+func FindUserByUsername(username string) (model.User, error) {
+	var user model.User
+	result := config.DB.Where("username = ?", username).First(&user)
+	return user, result.Error
+}
+
+// 查询所有用户
+func ListAllUsers() ([]model.User, error) {
+	var users []model.User
+	result := config.DB.Order("created_at asc").Find(&users)
+	return users, result.Error
+}
+
+// 查询所有活跃成员(manager和executor角色)
 func FindAllActiveMembers() ([]model.User, error) {
 	var members []model.User
 	rolesToShow := []string{"manager", "executor"}
@@ -29,16 +38,7 @@ func FindAllActiveMembers() ([]model.User, error) {
 	return members, result.Error
 }
 
-// --- 为后台管理新增的函数 ---
-
-// ListAllUsers 获取系统内所有用户
-func ListAllUsers() ([]model.User, error) {
-	var users []model.User
-	result := config.DB.Order("created_at asc").Find(&users)
-	return users, result.Error
-}
-
-// CreateUser 创建一个新用户 (复用已有的CreateUser)
+// CreateUser 创建一个新用户
 func CreateUser(user *model.User) error {
 	result := config.DB.Create(user)
 	return result.Error
@@ -52,6 +52,16 @@ func UpdateUserRole(userID uuid.UUID, newRole string) error {
 // UpdateUserPassword 更新指定用户的密码
 func UpdateUserPassword(userID uuid.UUID, newPasswordHash string) error {
 	return config.DB.Model(&model.User{}).Where("id = ?", userID).Update("password_hash", newPasswordHash).Error
+}
+
+// UpdateUserProfile 更新用户的非敏感信息
+func UpdateUserProfile(userID uuid.UUID, updates map[string]interface{}) error {
+	// 如果没有任何需要更新的字段，则直接返回成功
+	if len(updates) == 0 {
+		return nil
+	}
+	// GORM的Updates方法，可以安全地只更新map中存在的字段
+	return config.DB.Model(&model.User{}).Where("id = ?", userID).Updates(updates).Error
 }
 
 // DeleteUser 删除一个指定用户

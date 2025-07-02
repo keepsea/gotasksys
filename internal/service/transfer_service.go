@@ -77,3 +77,28 @@ func RespondToTransferService(transferID, responderID uuid.UUID, action string) 
 	}
 	return errors.New("invalid action")
 }
+
+// CancelTransferService 封装了取消转交的业务逻辑
+func CancelTransferService(transferID, initiatorID uuid.UUID) error {
+	// 1. 查找转交记录并校验
+	transfer, err := repository.FindTransferByID(transferID)
+	if err != nil {
+		return errors.New("transfer request not found")
+	}
+	if transfer.Status != "pending" {
+		return errors.New("transfer request is no longer pending and cannot be cancelled")
+	}
+	// 权限校验：只有发起人自己才能取消
+	if transfer.FromUserID != initiatorID {
+		return errors.New("permission denied: you are not the initiator of this transfer")
+	}
+
+	// 2. 将转交记录的状态更新为 'cancelled'
+	if err := repository.UpdateTransferStatus(transferID, "cancelled"); err != nil {
+		return err
+	}
+
+	// 3. 将原任务的状态恢复为 'in_progress'
+	updates := map[string]interface{}{"status": "in_progress"}
+	return repository.UpdateTaskFields(transfer.TaskID, updates)
+}

@@ -56,3 +56,28 @@ func RejectTransfer(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Transfer rejected."})
 }
+
+// CancelTransfer 允许发起人取消一个待处理的转交请求
+func CancelTransfer(c *gin.Context) {
+	transferID, err := uuid.Parse(c.Param("transfer_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid transfer ID"})
+		return
+	}
+
+	// 从中间件获取当前操作用户的ID
+	initiatorID, _ := uuid.Parse(c.GetString("user_id"))
+
+	err = service.CancelTransferService(transferID, initiatorID)
+	if err != nil {
+		// 根据错误类型返回不同响应
+		if err.Error() == "permission denied: you are not the initiator of this transfer" {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Transfer cancelled successfully."})
+}

@@ -8,12 +8,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// ListTaskTypes 获取所有任务类型
 func ListTaskTypes() ([]model.TaskType, error) {
 	var types []model.TaskType
 	result := config.DB.Order("created_at asc").Find(&types)
 	return types, result.Error
 }
 
+// CreateTaskType 创建一个新的任务类型
 func CreateTaskType(taskType *model.TaskType) error {
 	result := config.DB.Create(taskType)
 	return result.Error
