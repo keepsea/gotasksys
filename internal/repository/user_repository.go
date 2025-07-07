@@ -69,3 +69,18 @@ func DeleteUser(userID uuid.UUID) error {
 	// 注意：这是一个物理删除
 	return config.DB.Where("id = ?", userID).Delete(&model.User{}).Error
 }
+
+// HasUnfinishedTasks 检查一个用户是否还有未完成的任务
+func HasUnfinishedTasks(userID uuid.UUID) (bool, error) {
+	var count int64
+	// 查询该用户作为负责人(assignee)的、状态不为'completed'的任务数量
+	result := config.DB.Model(&model.Task{}).
+		Where("assignee_id = ? AND status != ?", userID, "completed").
+		Count(&count)
+
+	if result.Error != nil {
+		return false, result.Error
+	}
+
+	return count > 0, nil
+}

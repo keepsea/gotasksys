@@ -35,7 +35,19 @@ func UpdateUserRoleService(userID uuid.UUID, newRole string) error {
 }
 
 func DeleteUserService(userID uuid.UUID) error {
-	// 在这里可以加入不允许删除自己的逻辑等，V1.0暂时简化
+	// --- 新增：安全删除前置检查 ---
+	hasTasks, err := repository.HasUnfinishedTasks(userID)
+	if err != nil {
+		// 如果查询出错，也阻止删除，并返回错误
+		return err
+	}
+	if hasTasks {
+		// 如果有未完成任务，返回一个明确的业务错误
+		return errors.New("cannot delete user: user has unfinished tasks. Please transfer or complete them first")
+	}
+	// ---------------------------------
+
+	// 如果检查通过，则继续执行删除操作
 	return repository.DeleteUser(userID)
 }
 
@@ -48,6 +60,34 @@ func ResetPasswordService(userID uuid.UUID, newPassword string) error {
 		return errors.New("failed to hash new password")
 	}
 	return repository.UpdateUserPassword(userID, newPasswordHash)
+}
+
+// UpdateUserByAdminService (新)
+func UpdateUserByAdminService(userID uuid.UUID, input model.User) error {
+	// 查找要被更新的用户
+	_, err := repository.FindUserByID(userID)
+	if err != nil {
+		return errors.New("user not found")
+	}
+
+	// 准备要更新的字段
+	updates := make(map[string]interface{})
+	if input.RealName != "" {
+		updates["real_name"] = input.RealName
+	}
+	if input.Role != "" {
+		updates["role"] = input.Role
+	}
+	if input.Team != "" {
+		updates["team"] = input.Team
+	}
+	if input.Email != "" {
+		updates["email"] = input.Email
+	}
+	// DailyCapacityHours 是指针，所以可以直接赋值，即使是nil（表示清空）
+	updates["daily_capacity_hours"] = input.DailyCapacityHours
+
+	return repository.UpdateUserProfile(userID, updates)
 }
 
 // UpdateTaskTypeService 封装了更新任务类型的业务逻辑

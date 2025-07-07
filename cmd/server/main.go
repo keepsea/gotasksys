@@ -52,6 +52,14 @@ func main() {
 			authRequired.GET("/dashboard/summary", handler.GetDashboardSummary)
 			authRequired.GET("/personnel/status", handler.GetPersonnelStatus)
 
+			// === 新增：用户个人请假管理路由 ===
+			leaveRoutes := authRequired.Group("/profile/leaves")
+			{
+				leaveRoutes.GET("", handler.ListMyLeavesHandler)            // 查看我的请假
+				leaveRoutes.POST("", handler.CreateLeaveHandler)            // 新增请假
+				leaveRoutes.POST("/:id/delete", handler.DeleteLeaveHandler) // 删除请假
+			}
+
 			// 任务管理路由(需要用户认证)
 			authRequired.POST("/tasks", handler.CreateTask)
 			authRequired.GET("/tasks", handler.ListTasks)
@@ -101,9 +109,9 @@ func main() {
 			// 用户管理
 			adminRoutes.GET("/users", handler.ListUsers)
 			adminRoutes.POST("/users", handler.CreateUser)
-			adminRoutes.POST("/users/:id/update-role", handler.UpdateUserRole)   // <-- 修改: PUT -> POST
-			adminRoutes.POST("/users/:id/reset-password", handler.ResetPassword) // <-- 修改: PUT -> POST
-			adminRoutes.POST("/users/:id/delete", handler.DeleteUser)            // <-- 修改: DELETE -> POST
+			adminRoutes.POST("/users/:id/update", handler.UpdateUser)
+			adminRoutes.POST("/users/:id/reset-password", handler.ResetPassword)
+			adminRoutes.POST("/users/:id/delete", handler.DeleteUser)
 
 			// 任务类型管理
 			adminRoutes.GET("/task-types", handler.ListTaskTypes)

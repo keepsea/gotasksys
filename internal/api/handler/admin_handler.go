@@ -77,26 +77,42 @@ type UpdateUserRoleInput struct {
 	Role string `json:"role" binding:"required"`
 }
 
-func UpdateUserRole(c *gin.Context) {
-	userID, _ := uuid.Parse(c.Param("id"))
-	var input UpdateUserRoleInput
+// UpdateUserInput (最终版)
+type UpdateUserInput struct {
+	RealName           string   `json:"real_name"`
+	Role               string   `json:"role"`
+	Team               string   `json:"team"`
+	Email              string   `json:"email" binding:"omitempty,email"` // <-- 新增
+	DailyCapacityHours *float64 `json:"daily_capacity_hours"`
+}
+
+// UpdateUser (新) - 统一的用户更新接口
+func UpdateUser(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var input UpdateUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 此处也应增加对role值的校验
-	allowedRoles := map[string]bool{"system_admin": true, "manager": true, "executor": true, "creator": true}
-	if !allowedRoles[input.Role] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role specified"})
-		return
+	updateData := model.User{
+		RealName:           input.RealName,
+		Role:               input.Role,
+		Team:               input.Team,
+		Email:              input.Email,
+		DailyCapacityHours: input.DailyCapacityHours,
 	}
 
-	if err := service.UpdateUserRoleService(userID, input.Role); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user role"})
+	if err := service.UpdateUserByAdminService(userID, updateData); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "User role updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "User updated successfully"})
 }
 
 // 4、重置用户密码
@@ -121,11 +137,25 @@ func ResetPassword(c *gin.Context) {
 
 // 5、删除用户
 func DeleteUser(c *gin.Context) {
-	userID, _ := uuid.Parse(c.Param("id"))
-	if err := service.DeleteUserService(userID); err != nil {
+	userID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	err = service.DeleteUserService(userID)
+	if err != nil {
+		// --- 新增：根据错误类型返回不同响应 ---
+		if err.Error() == "cannot delete user: user has unfinished tasks. Please transfer or complete them first" {
+			// 对于业务逻辑冲突，返回 409 Conflict
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		// 对于其他错误，返回通用服务器错误
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		return
 	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 }
 

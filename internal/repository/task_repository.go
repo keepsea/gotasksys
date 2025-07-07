@@ -135,3 +135,12 @@ func GetPerformanceMetricsForUser(userID uuid.UUID) (PerformanceMetrics, error) 
 
 	return metrics, nil
 }
+
+// BatchUpdateSubtasksAssignee 批量更新一个主任务下，特定原负责人的所有子任务的新负责人
+func BatchUpdateSubtasksAssignee(parentTaskID uint, oldAssigneeID, newAssigneeID uuid.UUID) error {
+	result := config.DB.Model(&model.Task{}).
+		Where("parent_task_id = ? AND assignee_id = ?", parentTaskID, oldAssigneeID).
+		Update("assignee_id", newAssigneeID)
+
+	return result.Error
+}
